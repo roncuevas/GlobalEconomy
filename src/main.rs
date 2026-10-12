@@ -461,8 +461,15 @@ async fn start_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl 
     let mut runs = state.runs.write().await;
     match runs.get_mut(&id) {
         Some(r) => {
+            let should_spawn = r.status != "running";
             r.status = "running".into();
             persist_run(&state.storage_dir, id, r);
+            if should_spawn {
+                let loop_state = state.clone();
+                tokio::spawn(async move {
+                    running_loop(loop_state, id).await;
+                });
+            }
             Json(StatusResponse {
                 run_id: id,
                 status: r.status.clone(),
@@ -489,6 +496,28 @@ async fn pause_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl 
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
+
+async fn running_loop(state: AppState, id: Uuid) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let mut runs = state.runs.write().await;
+        let Some(record) = runs.get_mut(&id) else {
+            return;
+        };
+        if record.status != "running" {
+            return;
+        }
+        let snapshot = record.sim.step();
+        record.history.push(snapshot.clone());
+        if record.history.len() > HISTORY_LIMIT {
+            let excess = record.history.len() - HISTORY_LIMIT;
+            record.history.drain(..excess);
+        }
+        persist_run(&state.storage_dir, id, record);
+        append_snapshot(&state.storage_dir, id, &snapshot);
+    }
+}
+
 async fn step_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
     let mut runs = state.runs.write().await;
     match runs.get_mut(&id) {
@@ -929,20 +958,10 @@ async fn stream(
 async fn stream_socket(mut socket: WebSocket, state: AppState, id: Uuid) {
     loop {
         let (status, snap): (String, Snapshot) = {
-            let mut runs = state.runs.write().await;
-            let Some(r) = runs.get_mut(&id) else {
+            let runs = state.runs.read().await;
+            let Some(r) = runs.get(&id) else {
                 return;
             };
-            if r.status == "running" {
-                r.sim.step();
-                remember(r);
-                persist_run(&state.storage_dir, id, r);
-                append_snapshot(
-                    &state.storage_dir,
-                    id,
-                    r.history.last().expect("history is non-empty"),
-                );
-            }
             (r.status.clone(), r.sim.snapshot())
         };
         let payload = serde_json::json!({"type":"snapshot","status":&status,"data":&snap});
