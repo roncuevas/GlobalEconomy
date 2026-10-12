@@ -21,12 +21,12 @@ function json(value) {
   };
 }
 
-const config = (seed, transfer) => ({
+const config = (seed, transfer, ticks = 8) => ({
   seed,
   model_version: '0.4.0',
   agent_count: 100,
   regions: 4,
-  ticks: 8,
+  ticks,
   historical_mode: true,
   catastrophes: false,
   policy_mode: 'manual',
@@ -52,8 +52,9 @@ if (health !== 'ok') throw new Error('health endpoint did not return ok');
 
 const first = await request('/api/runs', { method: 'POST', ...json(config(301, 0)) });
 const second = await request('/api/runs', { method: 'POST', ...json(config(302, 120)) });
+const horizonRun = await request('/api/runs', { method: 'POST', ...json(config(303, 0, 1)) });
 
-for (const run of [first, second]) {
+for (const run of [first, second, horizonRun]) {
   if (!run.run_id || run.status !== 'paused') throw new Error('run creation contract failed');
   const stepped = await request(`/api/runs/${run.run_id}/step`, { method: 'POST' });
   if (stepped.tick !== 1 || stepped.agents.length === 0) throw new Error('step contract failed');
@@ -96,6 +97,14 @@ const parquet = await request(`/api/runs/${first.run_id}/metrics.parquet`);
 const magic = new TextDecoder().decode(new Uint8Array(parquet).slice(0, 4));
 if (magic !== 'PAR1') throw new Error('Parquet export failed');
 
+await request(`/api/runs/${horizonRun.run_id}/start`, { method: 'POST' });
+await new Promise((resolve) => setTimeout(resolve, 350));
+const horizonRuns = await request('/api/runs');
+const horizonSummary = horizonRuns.find((run) => run.run_id === horizonRun.run_id);
+if (!horizonSummary || horizonSummary.tick !== 1 || horizonSummary.status !== 'paused') {
+  throw new Error('run did not pause at its configured horizon');
+}
+
 await request(`/api/runs/${first.run_id}/start`, { method: 'POST' });
 await new Promise((resolve) => setTimeout(resolve, 350));
 const startedSnapshot = await request(`/api/runs/${first.run_id}/snapshot`);
@@ -126,6 +135,7 @@ await request(`/api/runs/${first.run_id}/pause`, { method: 'POST' });
 console.log(JSON.stringify({
   ok: true,
   runs: [first.run_id, second.run_id],
+  horizon_status: horizonSummary.status,
   comparison_rows: comparison.runs.length,
   filtered_events: events.length,
   filtered_transactions: transactions.length,
