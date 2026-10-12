@@ -27,6 +27,12 @@ impl Default for PolicyConfig {
 pub struct ScenarioConfig {
     pub food_price: f64,
     pub wage: f64,
+    #[serde(default = "default_initial_wealth")]
+    pub initial_wealth: f64,
+}
+
+fn default_initial_wealth() -> f64 {
+    2_500.0
 }
 
 impl Default for ScenarioConfig {
@@ -34,6 +40,7 @@ impl Default for ScenarioConfig {
         Self {
             food_price: 12.0,
             wage: 100.0,
+            initial_wealth: default_initial_wealth(),
         }
     }
 }
@@ -49,6 +56,25 @@ pub struct RunConfig {
     pub policy_config: PolicyConfig,
     #[serde(default)]
     pub scenario_config: ScenarioConfig,
+    #[serde(default)]
+    pub monetary_history: Vec<MonetaryPolicy>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MonetaryPolicy {
+    pub apply_tick: u64,
+    pub name: String,
+    pub description: String,
+    pub base_interest_rate: f64,
+    pub liquidity_injection: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MoneyEvent {
+    pub tick: u64,
+    pub kind: String,
+    pub amount: f64,
+    pub reason: String,
 }
 
 impl Default for RunConfig {
@@ -61,6 +87,7 @@ impl Default for RunConfig {
             ticks: 1_000,
             policy_config: Default::default(),
             scenario_config: Default::default(),
+            monetary_history: Vec::new(),
         }
     }
 }
@@ -92,6 +119,8 @@ pub struct Metrics {
     pub money_supply: f64,
     pub interest_rate: f64,
     pub top_10_wealth_share: f64,
+    pub money_created_this_tick: f64,
+    pub cumulative_money_created: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,6 +152,8 @@ pub struct Snapshot {
     pub edges: Vec<VisualEdge>,
     pub metrics: Metrics,
     pub policy: PolicyConfig,
+    pub monetary_history: Vec<MonetaryPolicy>,
+    pub money_events: Vec<MoneyEvent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -142,6 +173,9 @@ pub struct Simulation {
     pub metrics: Metrics,
     pub events: Vec<EconomicEvent>,
     previous_wealth: Vec<f64>,
+    money_created_total: f64,
+    money_created_this_tick: f64,
+    money_events: Vec<MoneyEvent>,
 }
 
 impl Simulation {
@@ -149,9 +183,10 @@ impl Simulation {
         let count = config.agent_count.min(100_000);
         let mut rng = ChaCha8Rng::seed_from_u64(config.seed);
         let mut people = Vec::with_capacity(count);
+        let initial_wealth = config.scenario_config.initial_wealth.max(1.0);
         for id in 0..count as u32 {
             let region = rng.random_range(0..config.regions.max(1)) as u16;
-            let wealth = rng.random_range(500.0..5_000.0);
+            let wealth = initial_wealth;
             people.push(Person {
                 id,
                 region,
@@ -165,6 +200,11 @@ impl Simulation {
                 risk_score: 0.0,
             });
         }
+        let mut config = config;
+        if config.monetary_history.is_empty() {
+            config.monetary_history = Self::default_monetary_history(config.ticks);
+        }
+        let initial_money = initial_wealth * count as f64;
         let mut sim = Self {
             config,
             people,
@@ -172,9 +212,50 @@ impl Simulation {
             metrics: Metrics::default(),
             events: Vec::new(),
             previous_wealth: vec![0.0; count],
+            money_created_total: initial_money,
+            money_created_this_tick: initial_money,
+            money_events: vec![MoneyEvent {
+                tick: 0,
+                kind: "genesis".into(),
+                amount: initial_money,
+                reason: "dotación inicial igual para todos los agentes".into(),
+            }],
         };
         sim.recalculate_metrics();
         sim
+    }
+
+    pub fn default_monetary_history(_ticks: u64) -> Vec<MonetaryPolicy> {
+        vec![
+            MonetaryPolicy {
+                apply_tick: 0,
+                name: "Génesis monetaria".into(),
+                description: "Todos reciben la misma dotación inicial".into(),
+                base_interest_rate: 0.04,
+                liquidity_injection: 0.0,
+            },
+            MonetaryPolicy {
+                apply_tick: 12,
+                name: "Expansión de liquidez".into(),
+                description: "El banco central crea dinero para reactivar el intercambio".into(),
+                base_interest_rate: 0.025,
+                liquidity_injection: 350_000.0,
+            },
+            MonetaryPolicy {
+                apply_tick: 28,
+                name: "Contención monetaria".into(),
+                description: "Sube la tasa para enfriar precios y crédito".into(),
+                base_interest_rate: 0.09,
+                liquidity_injection: 0.0,
+            },
+            MonetaryPolicy {
+                apply_tick: 50,
+                name: "Reactivación".into(),
+                description: "Nueva expansión para sostener empleo y comercio".into(),
+                base_interest_rate: 0.03,
+                liquidity_injection: 600_000.0,
+            },
+        ]
     }
 
     pub fn step(&mut self) -> Snapshot {
@@ -182,6 +263,27 @@ impl Simulation {
             return self.snapshot();
         }
         self.previous_wealth = self.people.iter().map(|p| p.wealth).collect();
+        self.money_created_this_tick = 0.0;
+        if let Some(policy) = self
+            .config
+            .monetary_history
+            .iter()
+            .find(|policy| policy.apply_tick == self.tick)
+            .cloned()
+        {
+            self.config.policy_config.base_interest_rate = policy.base_interest_rate;
+            self.config.policy_config.liquidity_injection = policy.liquidity_injection;
+            if policy.liquidity_injection > 0.0 {
+                self.money_created_this_tick = policy.liquidity_injection;
+                self.money_created_total += policy.liquidity_injection;
+                self.money_events.push(MoneyEvent {
+                    tick: self.tick,
+                    kind: "policy_injection".into(),
+                    amount: policy.liquidity_injection,
+                    reason: policy.description,
+                });
+            }
+        }
         let seed = self.config.seed ^ self.tick.wrapping_mul(0x9E3779B97F4A7C15);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let wage = self.config.scenario_config.wage;
@@ -264,6 +366,8 @@ impl Simulation {
             money_supply: self.people.iter().map(|p| p.money).sum(),
             interest_rate: self.config.policy_config.base_interest_rate,
             top_10_wealth_share: if total > 0.0 { top_wealth / total } else { 0.0 },
+            money_created_this_tick: self.money_created_this_tick,
+            cumulative_money_created: self.money_created_total,
         };
     }
 
@@ -298,7 +402,27 @@ impl Simulation {
                 wealth_delta: 0.0,
             });
         }
+        agents.push(VisualAgent {
+            id: 2_000_000,
+            kind: "central_bank".into(),
+            region: 0,
+            x: 0.5,
+            y: 0.08,
+            size: 18.0,
+            risk_score: 0.0,
+            employed: true,
+            wealth: self.metrics.money_supply as f32,
+            wealth_delta: self.metrics.money_created_this_tick as f32,
+        });
         let mut edges = Vec::with_capacity(self.people.len() * 2);
+        for region in 0..self.config.regions.max(1) as u16 {
+            edges.push(VisualEdge {
+                source: 2_000_000,
+                target: 1_000_000 + region as u32,
+                kind: "issuance".into(),
+                weight: 2.5,
+            });
+        }
         for person in &self.people {
             let market_id = 1_000_000 + person.region as u32;
             edges.push(VisualEdge {
@@ -326,6 +450,8 @@ impl Simulation {
             edges,
             metrics: self.metrics.clone(),
             policy: self.config.policy_config.clone(),
+            monetary_history: self.config.monetary_history.clone(),
+            money_events: self.money_events.clone(),
         }
     }
 
@@ -370,7 +496,10 @@ mod tests {
     fn different_seed_changes_population() {
         let a = Simulation::new(config(7));
         let b = Simulation::new(config(8));
-        assert_ne!(a.people[0].wealth, b.people[0].wealth);
+        assert_ne!(
+            serde_json::to_string(&a.people).unwrap(),
+            serde_json::to_string(&b.people).unwrap()
+        );
     }
     #[test]
     fn gini_is_bounded() {
@@ -385,5 +514,30 @@ mod tests {
             s.step();
         }
         assert!(s.people.iter().all(|p| p.money >= 0.0));
+    }
+
+    #[test]
+    fn initial_endowment_is_equal() {
+        let s = Simulation::new(config(42));
+        assert!(s.people.iter().all(|p| p.wealth == 2_500.0));
+        assert_eq!(s.metrics.gini, 0.0);
+        assert_eq!(s.money_events[0].kind, "genesis");
+    }
+
+    #[test]
+    fn scheduled_policy_creates_money_at_tick() {
+        let mut config = config(42);
+        config.ticks = 20;
+        let mut s = Simulation::new(config);
+        for _ in 0..13 {
+            s.step();
+        }
+        assert_eq!(s.tick, 13);
+        assert_eq!(s.metrics.money_created_this_tick, 350_000.0);
+        assert!(s
+            .money_events
+            .iter()
+            .any(|event| event.kind == "policy_injection"));
+        assert!(s.metrics.cumulative_money_created > s.people.len() as f64 * 2_500.0);
     }
 }
