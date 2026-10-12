@@ -58,15 +58,33 @@ pub struct RunConfig {
     pub scenario_config: ScenarioConfig,
     #[serde(default)]
     pub monetary_history: Vec<MonetaryPolicy>,
+    #[serde(default = "default_true")]
+    pub historical_mode: bool,
+    #[serde(default)]
+    pub catastrophes: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MonetaryPolicy {
     pub apply_tick: u64,
+    #[serde(default)]
+    pub era: String,
     pub name: String,
     pub description: String,
     pub base_interest_rate: f64,
     pub liquidity_injection: f64,
+    #[serde(default)]
+    pub government_debt_change: f64,
+    #[serde(default)]
+    pub private_credit_creation: f64,
+    #[serde(default)]
+    pub catastrophe: bool,
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -88,6 +106,8 @@ impl Default for RunConfig {
             policy_config: Default::default(),
             scenario_config: Default::default(),
             monetary_history: Vec::new(),
+            historical_mode: true,
+            catastrophes: false,
         }
     }
 }
@@ -121,6 +141,10 @@ pub struct Metrics {
     pub top_10_wealth_share: f64,
     pub money_created_this_tick: f64,
     pub cumulative_money_created: f64,
+    pub government_debt: f64,
+    pub private_debt: f64,
+    pub debt_created_this_tick: f64,
+    pub monetary_regime: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -176,6 +200,9 @@ pub struct Simulation {
     money_created_total: f64,
     money_created_this_tick: f64,
     money_events: Vec<MoneyEvent>,
+    government_debt: f64,
+    private_debt: f64,
+    debt_created_this_tick: f64,
 }
 
 impl Simulation {
@@ -202,7 +229,12 @@ impl Simulation {
         }
         let mut config = config;
         if config.monetary_history.is_empty() {
-            config.monetary_history = Self::default_monetary_history(config.ticks);
+            let history = Self::default_monetary_history(config.ticks);
+            config.monetary_history = if config.historical_mode {
+                history
+            } else {
+                history.into_iter().take(1).collect()
+            };
         }
         let initial_money = initial_wealth * count as f64;
         let mut sim = Self {
@@ -220,41 +252,409 @@ impl Simulation {
                 amount: initial_money,
                 reason: "dotación inicial igual para todos los agentes".into(),
             }],
+            government_debt: 0.0,
+            private_debt: 0.0,
+            debt_created_this_tick: 0.0,
         };
         sim.recalculate_metrics();
         sim
     }
 
     pub fn default_monetary_history(_ticks: u64) -> Vec<MonetaryPolicy> {
+        let p = |tick: u64,
+                 era: &str,
+                 name: &str,
+                 description: &str,
+                 rate: f64,
+                 liquidity: f64,
+                 government_debt: f64,
+                 private_credit: f64,
+                 catastrophe: bool,
+                 optional: bool| MonetaryPolicy {
+            apply_tick: tick,
+            era: era.into(),
+            name: name.into(),
+            description: description.into(),
+            base_interest_rate: rate,
+            liquidity_injection: liquidity,
+            government_debt_change: government_debt,
+            private_credit_creation: private_credit,
+            catastrophe,
+            optional,
+        };
         vec![
-            MonetaryPolicy {
-                apply_tick: 0,
-                name: "Génesis monetaria".into(),
-                description: "Todos reciben la misma dotación inicial".into(),
-                base_interest_rate: 0.04,
-                liquidity_injection: 0.0,
-            },
-            MonetaryPolicy {
-                apply_tick: 12,
-                name: "Expansión de liquidez".into(),
-                description: "El banco central crea dinero para reactivar el intercambio".into(),
-                base_interest_rate: 0.025,
-                liquidity_injection: 350_000.0,
-            },
-            MonetaryPolicy {
-                apply_tick: 28,
-                name: "Contención monetaria".into(),
-                description: "Sube la tasa para enfriar precios y crédito".into(),
-                base_interest_rate: 0.09,
-                liquidity_injection: 0.0,
-            },
-            MonetaryPolicy {
-                apply_tick: 50,
-                name: "Reactivación".into(),
-                description: "Nueva expansión para sostener empleo y comercio".into(),
-                base_interest_rate: 0.03,
-                liquidity_injection: 600_000.0,
-            },
+            p(
+                0,
+                "commodity",
+                "Génesis monetaria",
+                "Todos reciben la misma dotación inicial",
+                0.04,
+                0.0,
+                0.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                2,
+                "commodity",
+                "Trueque y unidad de cuenta",
+                "La comunidad acuerda una unidad para valorar intercambios",
+                0.04,
+                0.0,
+                0.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                4,
+                "metallic",
+                "Moneda metálica",
+                "El Estado acuña piezas con valor y peso reconocibles",
+                0.04,
+                0.0,
+                50_000.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                6,
+                "metallic",
+                "Impuesto de acuñación",
+                "La autoridad obtiene ingresos por emitir moneda",
+                0.04,
+                0.0,
+                20_000.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                8,
+                "convertible",
+                "Papel convertible",
+                "Los recibos representan reservas metálicas depositadas",
+                0.035,
+                0.0,
+                80_000.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                10,
+                "credit",
+                "Banca y reservas",
+                "Los bancos empiezan a crear depósitos al conceder crédito",
+                0.035,
+                0.0,
+                0.0,
+                180_000.0,
+                false,
+                false,
+            ),
+            p(
+                12,
+                "credit",
+                "Expansión de crédito",
+                "Más préstamos amplían depósitos y actividad económica",
+                0.025,
+                350_000.0,
+                0.0,
+                300_000.0,
+                false,
+                false,
+            ),
+            p(
+                14,
+                "gold_standard",
+                "Patrón oro",
+                "La moneda queda convertible a oro a una paridad fija",
+                0.05,
+                0.0,
+                0.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                16,
+                "gold_standard",
+                "Disciplina externa",
+                "La salida de oro fuerza una política más restrictiva",
+                0.075,
+                0.0,
+                0.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                18,
+                "war_finance",
+                "Financiación de guerra",
+                "El gobierno emite deuda para financiar gasto extraordinario",
+                0.06,
+                0.0,
+                500_000.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                20,
+                "war_finance",
+                "Suspensión de convertibilidad",
+                "La convertibilidad se suspende ante la emergencia",
+                0.045,
+                100_000.0,
+                250_000.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                22,
+                "gold_exchange",
+                "Retorno al oro",
+                "Se intenta restaurar la convertibilidad con una paridad modificada",
+                0.06,
+                0.0,
+                0.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                24,
+                "depression",
+                "Contracción deflacionaria",
+                "La defensa de la paridad reduce crédito y demanda",
+                0.10,
+                0.0,
+                0.0,
+                -100_000.0,
+                false,
+                false,
+            ),
+            p(
+                26,
+                "depression",
+                "Crisis bancaria",
+                "Quiebras destruyen depósitos y liquidan crédito",
+                0.08,
+                0.0,
+                0.0,
+                -250_000.0,
+                true,
+                true,
+            ),
+            p(
+                28,
+                "devaluation",
+                "Devaluación",
+                "La autoridad abandona una paridad para recuperar actividad",
+                0.04,
+                120_000.0,
+                100_000.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                30,
+                "bretton_woods",
+                "Bretton Woods",
+                "Tipos de cambio fijos pero ajustables y dólar ligado al oro",
+                0.045,
+                0.0,
+                300_000.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                32,
+                "bretton_woods",
+                "Reservas en dólares",
+                "Los déficits externos expanden reservas y dinero en otros países",
+                0.035,
+                220_000.0,
+                150_000.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                34,
+                "fiat_transition",
+                "Fin de la ventana de oro",
+                "El dólar deja de ser convertible a oro y comienza el dinero fiduciario",
+                0.055,
+                0.0,
+                0.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                36,
+                "fiat",
+                "Dinero fiduciario",
+                "La confianza y la política monetaria sostienen la unidad de cuenta",
+                0.06,
+                100_000.0,
+                200_000.0,
+                100_000.0,
+                false,
+                false,
+            ),
+            p(
+                38,
+                "inflation",
+                "Gran inflación",
+                "El exceso de demanda y expectativas elevan los precios",
+                0.08,
+                0.0,
+                0.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                40,
+                "disinflation",
+                "Desinflación",
+                "Una tasa alta enfría crédito, salarios y precios",
+                0.14,
+                0.0,
+                0.0,
+                -80_000.0,
+                false,
+                false,
+            ),
+            p(
+                42,
+                "financialization",
+                "Liberalización financiera",
+                "Más intermediación amplía el crédito privado y el riesgo",
+                0.07,
+                0.0,
+                0.0,
+                450_000.0,
+                false,
+                false,
+            ),
+            p(
+                44,
+                "housing_bubble",
+                "Burbuja inmobiliaria",
+                "El crédito barato infla precios de activos y garantías",
+                0.025,
+                180_000.0,
+                0.0,
+                700_000.0,
+                true,
+                true,
+            ),
+            p(
+                46,
+                "financial_crisis",
+                "Estallido inmobiliario",
+                "La caída de garantías destruye crédito y riqueza",
+                0.09,
+                0.0,
+                0.0,
+                -500_000.0,
+                true,
+                true,
+            ),
+            p(
+                48,
+                "qe",
+                "Flexibilización cuantitativa I",
+                "El banco central compra activos y crea reservas",
+                0.01,
+                800_000.0,
+                600_000.0,
+                0.0,
+                false,
+                false,
+            ),
+            p(
+                50,
+                "sovereign_debt",
+                "Crisis de deuda soberana",
+                "El gobierno refinancia deuda y aplica consolidación fiscal",
+                0.035,
+                150_000.0,
+                -100_000.0,
+                0.0,
+                true,
+                true,
+            ),
+            p(
+                52,
+                "zero_lower_bound",
+                "Tasa cercana a cero",
+                "La política convencional pierde margen y busca estimular demanda",
+                0.005,
+                250_000.0,
+                250_000.0,
+                300_000.0,
+                false,
+                false,
+            ),
+            p(
+                54,
+                "pandemic",
+                "Shock sanitario",
+                "Una catástrofe reduce producción y activa gasto de emergencia",
+                0.01,
+                900_000.0,
+                800_000.0,
+                500_000.0,
+                true,
+                true,
+            ),
+            p(
+                56,
+                "inflation_shock",
+                "Shock de oferta",
+                "La recuperación y restricciones elevan precios",
+                0.07,
+                0.0,
+                0.0,
+                0.0,
+                true,
+                true,
+            ),
+            p(
+                58,
+                "quantitative_tightening",
+                "Reducción de balance",
+                "Las ventas de activos retiran liquidez gradualmente",
+                0.085,
+                -300_000.0,
+                0.0,
+                -120_000.0,
+                false,
+                false,
+            ),
+            p(
+                60,
+                "digital_money",
+                "Dinero digital",
+                "Los depósitos digitales dominan el sistema de pagos",
+                0.05,
+                100_000.0,
+                0.0,
+                180_000.0,
+                false,
+                false,
+            ),
         ]
     }
 
@@ -264,22 +664,34 @@ impl Simulation {
         }
         self.previous_wealth = self.people.iter().map(|p| p.wealth).collect();
         self.money_created_this_tick = 0.0;
-        if let Some(policy) = self
+        self.debt_created_this_tick = 0.0;
+        let scheduled_policy = self
             .config
             .monetary_history
             .iter()
-            .find(|policy| policy.apply_tick == self.tick)
-            .cloned()
-        {
+            .find(|policy| {
+                policy.apply_tick == self.tick && (!policy.optional || self.config.catastrophes)
+            })
+            .cloned();
+        if let Some(policy) = scheduled_policy.clone() {
             self.config.policy_config.base_interest_rate = policy.base_interest_rate;
             self.config.policy_config.liquidity_injection = policy.liquidity_injection;
-            if policy.liquidity_injection > 0.0 {
-                self.money_created_this_tick = policy.liquidity_injection;
-                self.money_created_total += policy.liquidity_injection;
+            self.government_debt = (self.government_debt + policy.government_debt_change).max(0.0);
+            self.private_debt = (self.private_debt + policy.private_credit_creation).max(0.0);
+            self.debt_created_this_tick =
+                policy.government_debt_change + policy.private_credit_creation;
+            self.money_created_this_tick =
+                policy.liquidity_injection + policy.private_credit_creation;
+            self.money_created_total += self.money_created_this_tick;
+            if self.money_created_this_tick != 0.0 {
                 self.money_events.push(MoneyEvent {
                     tick: self.tick,
-                    kind: "policy_injection".into(),
-                    amount: policy.liquidity_injection,
+                    kind: if self.money_created_this_tick > 0.0 {
+                        "money_creation".into()
+                    } else {
+                        "money_destruction".into()
+                    },
+                    amount: self.money_created_this_tick,
                     reason: policy.description,
                 });
             }
@@ -292,8 +704,16 @@ impl Simulation {
             * (1.0 + (self.tick as f64 / 100_000.0) + policy_rate * 0.5);
         let tax_rate = self.config.policy_config.income_tax_rate.clamp(0.0, 1.0);
         let transfer = self.config.policy_config.transfer_per_person.max(0.0);
-        let liquidity = self.config.policy_config.liquidity_injection.max(0.0);
-        let per_person_liquidity = liquidity / self.people.len().max(1) as f64;
+        let scheduled_liquidity = scheduled_policy
+            .as_ref()
+            .map(|policy| policy.liquidity_injection)
+            .unwrap_or(0.0);
+        let per_person_liquidity = scheduled_liquidity / self.people.len().max(1) as f64;
+        let per_person_credit = scheduled_policy
+            .as_ref()
+            .map(|policy| policy.private_credit_creation)
+            .unwrap_or(0.0)
+            / self.people.len().max(1) as f64;
         self.events.clear();
         for person in &mut self.people {
             person.income = if person.employed {
@@ -306,6 +726,8 @@ impl Simulation {
             person.money -= tax;
             person.money += transfer;
             person.money += per_person_liquidity;
+            person.money += per_person_credit;
+            person.debt = (person.debt + per_person_credit).max(0.0);
             person.need = (person.need + 0.08).min(1.0);
             if person.money >= price && person.need > 0.45 {
                 person.money -= price;
@@ -354,6 +776,16 @@ impl Simulation {
         };
         let top_count = (self.people.len() / 10).max(1);
         let top_wealth: f64 = sorted.iter().rev().take(top_count).sum();
+        let monetary_regime = self
+            .config
+            .monetary_history
+            .iter()
+            .filter(|policy| {
+                policy.apply_tick <= self.tick && (!policy.optional || self.config.catastrophes)
+            })
+            .last()
+            .map(|policy| policy.era.clone())
+            .unwrap_or_else(|| "commodity".into());
         self.metrics = Metrics {
             gdp: income,
             gini: gini.clamp(0.0, 1.0),
@@ -368,6 +800,10 @@ impl Simulation {
             top_10_wealth_share: if total > 0.0 { top_wealth / total } else { 0.0 },
             money_created_this_tick: self.money_created_this_tick,
             cumulative_money_created: self.money_created_total,
+            government_debt: self.government_debt,
+            private_debt: self.private_debt,
+            debt_created_this_tick: self.debt_created_this_tick,
+            monetary_regime,
         };
     }
 
@@ -533,11 +969,11 @@ mod tests {
             s.step();
         }
         assert_eq!(s.tick, 13);
-        assert_eq!(s.metrics.money_created_this_tick, 350_000.0);
+        assert_eq!(s.metrics.money_created_this_tick, 650_000.0);
         assert!(s
             .money_events
             .iter()
-            .any(|event| event.kind == "policy_injection"));
+            .any(|event| event.kind == "money_creation"));
         assert!(s.metrics.cumulative_money_created > s.people.len() as f64 * 2_500.0);
     }
 }
