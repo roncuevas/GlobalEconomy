@@ -97,6 +97,9 @@ const magic = new TextDecoder().decode(new Uint8Array(parquet).slice(0, 4));
 if (magic !== 'PAR1') throw new Error('Parquet export failed');
 
 await request(`/api/runs/${first.run_id}/start`, { method: 'POST' });
+await new Promise((resolve) => setTimeout(resolve, 350));
+const startedSnapshot = await request(`/api/runs/${first.run_id}/snapshot`);
+if (startedSnapshot.tick < 2) throw new Error('start did not advance without a WebSocket client');
 const streamTypes = await new Promise((resolve, reject) => {
   const types = new Set();
   const socket = new WebSocket(`${baseUrl.replace(/^http/, 'ws')}/api/runs/${first.run_id}/stream`);
