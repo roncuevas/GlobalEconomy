@@ -1,9 +1,20 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { create } from 'zustand';
-import { NetworkCanvas } from './NetworkCanvas';
 import './style.css';
 import './risk.css';
+
+const NetworkCanvasModule = lazy(() =>
+  import('./NetworkCanvas').then(({ NetworkCanvas: Canvas }) => ({ default: Canvas })),
+);
+
+function NetworkCanvas(props: { snapshot: Snapshot | null; onSelect: (agent: Agent) => void }) {
+  return (
+    <Suspense fallback={<div className="network-canvas network-loading" role="status">Cargando mapa GPU…</div>}>
+      <NetworkCanvasModule {...props} />
+    </Suspense>
+  );
+}
 
 type Metrics = { gdp:number; gini:number; unemployment:number; inflation:number; tax_revenue:number; trade_volume:number; alerts:number; mean_wealth:number; money_supply:number; interest_rate:number; top_10_wealth_share:number; money_created_this_tick:number; cumulative_money_created:number; government_debt:number; private_debt:number; debt_created_this_tick:number; monetary_regime:string; wealth_shock:number; adverse_events:number; open_risks:number; countermeasures:number; systemic_risk:number; security_level:number; aml_alerts:number; tax_alerts:number };
 type Policy = { income_tax_rate:number; transfer_per_person:number; base_interest_rate:number; liquidity_injection:number };
