@@ -2768,6 +2768,76 @@ impl Simulation {
         self.recalculate_metrics();
     }
 
+    pub fn inject_external_shock(&mut self, kind: &str, region: u16, intensity: f64) -> bool {
+        let region = region % self.config.regions.max(1) as u16;
+        let intensity = intensity.clamp(0.0, 0.8);
+        let (reason, direction) = match kind {
+            "shock_oferta" => ("interrupción manual de producción y suministros", -1.0),
+            "corrida_bancaria" => ("pérdida manual de confianza en intermediarios", -1.0),
+            "burbuja_activos" => ("revaluación manual y acelerada de activos", 1.0),
+            "crisis_sanitaria" => ("caída manual de actividad y empleo", -1.0),
+            _ => return false,
+        };
+        let signed_intensity = intensity * direction;
+        for person in &mut self.people {
+            if person.region == region {
+                person.money = (person.money * (1.0 + signed_intensity)).max(0.0);
+                person.wealth = (person.money - person.debt).max(0.0);
+                if kind == "crisis_sanitaria" {
+                    person.employed = false;
+                }
+            }
+        }
+        match kind {
+            "shock_oferta" | "crisis_sanitaria" => {
+                for company in &mut self.companies {
+                    if company.region == region {
+                        company.production_capacity *= 1.0 - intensity;
+                    }
+                }
+            }
+            "corrida_bancaria" => {
+                for bank in &mut self.banks {
+                    if bank.region == region {
+                        bank.reserves *= 1.0 - intensity;
+                    }
+                }
+            }
+            "burbuja_activos" => {
+                for company in &mut self.companies {
+                    if company.region == region {
+                        company.price *= 1.0 + intensity;
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.wealth_shock_this_tick = signed_intensity;
+        self.systemic_risk = (self.systemic_risk + intensity * 0.35).clamp(0.0, 1.0);
+        self.external_shocks.push(ExternalShock {
+            id: self.external_shocks.len() as u64,
+            tick: self.tick,
+            kind: kind.into(),
+            region,
+            intensity: signed_intensity,
+            reason: reason.into(),
+        });
+        self.events.push(EconomicEvent {
+            tick: self.tick,
+            event_type: "external_shock".into(),
+            agent_id: self.government.id,
+            region,
+            amount: intensity,
+            reason: reason.into(),
+        });
+        if self.external_shocks.len() > 500 {
+            let excess = self.external_shocks.len() - 500;
+            self.external_shocks.drain(..excess);
+        }
+        self.recalculate_metrics();
+        true
+    }
+
     pub fn config_hash(&self) -> String {
         let bytes = serde_json::to_vec(&self.config).expect("config serializes");
         format!("{:x}", Sha256::digest(bytes))
@@ -2973,6 +3043,36 @@ mod tests {
             .events
             .iter()
             .any(|event| event.event_type == "external_shock"));
+    }
+
+    #[test]
+    fn manual_external_shock_changes_region_and_records_cause() {
+        let mut s = Simulation::new(config(42));
+        let before_capacity = s.companies[0].production_capacity;
+        let before_wealth: f64 = s
+            .people
+            .iter()
+            .filter(|person| person.region == 0)
+            .map(|person| person.wealth)
+            .sum();
+
+        assert!(s.inject_external_shock("shock_oferta", 0, 0.25));
+
+        assert!(s.companies[0].production_capacity < before_capacity);
+        let after_wealth: f64 = s
+            .people
+            .iter()
+            .filter(|person| person.region == 0)
+            .map(|person| person.wealth)
+            .sum();
+        assert!(after_wealth < before_wealth);
+        assert_eq!(s.external_shocks.len(), 1);
+        assert_eq!(s.external_shocks[0].kind, "shock_oferta");
+        assert!(s
+            .events
+            .iter()
+            .any(|event| event.event_type == "external_shock"));
+        assert!(!s.inject_external_shock("unknown", 0, 0.2));
     }
 
     #[test]

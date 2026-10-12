@@ -145,6 +145,7 @@ async fn main() {
             post(apply_countermeasure),
         )
         .route("/api/runs/{id}/policy-mode", post(update_policy_mode))
+        .route("/api/runs/{id}/shock", post(inject_shock))
         .route("/api/runs/{id}/snapshot", get(snapshot))
         .route("/api/runs/{id}/history", get(history))
         .route("/api/runs/{id}/metrics", get(metrics))
@@ -548,6 +549,13 @@ struct PolicyModeRequest {
     mode: PolicyMode,
 }
 
+#[derive(Deserialize)]
+struct ShockRequest {
+    kind: String,
+    region: u16,
+    intensity: f64,
+}
+
 async fn apply_next_policy(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -589,6 +597,33 @@ async fn update_policy_mode(
                 r.history.last().expect("history is non-empty"),
             );
             Json(r.sim.snapshot()).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn inject_shock(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(request): Json<ShockRequest>,
+) -> impl IntoResponse {
+    let mut runs = state.runs.write().await;
+    match runs.get_mut(&id) {
+        Some(record) => {
+            if !record
+                .sim
+                .inject_external_shock(&request.kind, request.region, request.intensity)
+            {
+                return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+            }
+            remember(record);
+            persist_run(&state.storage_dir, id, record);
+            append_snapshot(
+                &state.storage_dir,
+                id,
+                record.history.last().expect("history is non-empty"),
+            );
+            Json(record.sim.snapshot()).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }
