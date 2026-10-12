@@ -35,6 +35,8 @@ components:
         regions: { type: integer, minimum: 1 }
         ticks: { type: integer, minimum: 1 }
         monetary_history: { type: array, items: { $ref: '#/components/schemas/MonetaryPolicy' } }
+        historical_mode: { type: boolean, default: true }
+        catastrophes: { type: boolean, default: false }
     Snapshot:
       type: object
       properties:
@@ -57,4 +59,8 @@ components:
         description: { type: string }
         base_interest_rate: { type: number }
         liquidity_injection: { type: number }
+        government_debt_change: { type: number }
+        private_credit_creation: { type: number }
+        catastrophe: { type: boolean }
+        optional: { type: boolean }
 
