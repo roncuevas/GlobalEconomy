@@ -118,6 +118,7 @@ struct TransactionQuery {
 
 const HISTORY_LIMIT: usize = 240;
 const DATA_DIR_ENV: &str = "GLOBALECONOMY_DATA_DIR";
+const PORT_ENV: &str = "GLOBALECONOMY_PORT";
 
 #[tokio::main]
 async fn main() {
@@ -161,7 +162,10 @@ async fn main() {
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    let port = std::env::var(PORT_ENV).unwrap_or_else(|_| "8080".into());
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+        .await
+        .unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
