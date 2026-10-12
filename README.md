@@ -33,7 +33,7 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 
 El endpoint de creación acepta `seed`, `model_version`, `agent_count`, `regions`, `ticks`, `policy_config` y `scenario_config`. El límite defensivo actual es 100,000 agentes; el valor por defecto es 10,000.
 
-El servidor mantiene los últimos 240 snapshots por corrida para replay local y comparación rápida. Esta primera capa es deliberadamente acotada para no hacer crecer la memoria sin límite; la persistencia duradera en SQLite/Parquet será la siguiente extensión.
+El servidor mantiene los últimos 240 snapshots por corrida para replay local y comparación rápida. Además serializa cada corrida en `data/runs/run-{id}.json` usando escritura temporal y renombrado atómico, y las restaura al reiniciar. Puedes cambiar la carpeta con `GLOBALECONOMY_DATA_DIR`. Esta primera capa evita una base de datos obligatoria; SQLite/Parquet queda preparado como evolución para historiales mucho más largos.
 
 ## Diseño del MVP
 
