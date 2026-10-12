@@ -82,6 +82,8 @@ pub struct MonetaryPolicy {
     #[serde(default)]
     pub private_credit_creation: f64,
     #[serde(default)]
+    pub wealth_shock: f64,
+    #[serde(default)]
     pub catastrophe: bool,
     #[serde(default)]
     pub optional: bool,
@@ -145,6 +147,7 @@ pub struct Metrics {
     pub private_debt: f64,
     pub debt_created_this_tick: f64,
     pub monetary_regime: String,
+    pub wealth_shock: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -203,6 +206,7 @@ pub struct Simulation {
     government_debt: f64,
     private_debt: f64,
     debt_created_this_tick: f64,
+    wealth_shock_this_tick: f64,
 }
 
 impl Simulation {
@@ -255,6 +259,7 @@ impl Simulation {
             government_debt: 0.0,
             private_debt: 0.0,
             debt_created_this_tick: 0.0,
+            wealth_shock_this_tick: 0.0,
         };
         sim.recalculate_metrics();
         sim
@@ -279,10 +284,11 @@ impl Simulation {
             liquidity_injection: liquidity,
             government_debt_change: government_debt,
             private_credit_creation: private_credit,
+            wealth_shock: 0.0,
             catastrophe,
             optional,
         };
-        vec![
+        let mut history = vec![
             p(
                 0,
                 "commodity",
@@ -655,7 +661,18 @@ impl Simulation {
                 false,
                 false,
             ),
-        ]
+        ];
+        for event in &mut history {
+            event.wealth_shock = match event.apply_tick {
+                44 => 0.18,
+                46 => -0.42,
+                50 => -0.18,
+                54 => -0.30,
+                56 => -0.15,
+                _ => 0.0,
+            };
+        }
+        history
     }
 
     pub fn step(&mut self) -> Snapshot {
@@ -665,6 +682,7 @@ impl Simulation {
         self.previous_wealth = self.people.iter().map(|p| p.wealth).collect();
         self.money_created_this_tick = 0.0;
         self.debt_created_this_tick = 0.0;
+        self.wealth_shock_this_tick = 0.0;
         let scheduled_policy = self
             .config
             .monetary_history
@@ -680,6 +698,7 @@ impl Simulation {
             self.private_debt = (self.private_debt + policy.private_credit_creation).max(0.0);
             self.debt_created_this_tick =
                 policy.government_debt_change + policy.private_credit_creation;
+            self.wealth_shock_this_tick = policy.wealth_shock;
             self.money_created_this_tick =
                 policy.liquidity_injection + policy.private_credit_creation;
             self.money_created_total += self.money_created_this_tick;
@@ -728,6 +747,9 @@ impl Simulation {
             person.money += per_person_liquidity;
             person.money += per_person_credit;
             person.debt = (person.debt + per_person_credit).max(0.0);
+            if self.wealth_shock_this_tick != 0.0 {
+                person.money = (person.money * (1.0 + self.wealth_shock_this_tick)).max(0.0);
+            }
             person.need = (person.need + 0.08).min(1.0);
             if person.money >= price && person.need > 0.45 {
                 person.money -= price;
@@ -744,7 +766,11 @@ impl Simulation {
             person.risk_score = ((person.income * 12.0 + person.money) / (person.wealth + 1.0)
                 - 1.0)
                 .clamp(0.0, 1.0);
-            if rng.random_bool(0.01) {
+            if self.wealth_shock_this_tick < -0.2 && rng.random_bool(0.15) {
+                person.employed = false;
+            } else if self.wealth_shock_this_tick > 0.1 && rng.random_bool(0.08) {
+                person.employed = true;
+            } else if rng.random_bool(0.01) {
                 person.employed = !person.employed;
             }
         }
@@ -804,10 +830,13 @@ impl Simulation {
             private_debt: self.private_debt,
             debt_created_this_tick: self.debt_created_this_tick,
             monetary_regime,
+            wealth_shock: self.wealth_shock_this_tick,
         };
     }
 
     pub fn snapshot(&self) -> Snapshot {
+        let columns = (self.people.len() as f32).sqrt().ceil().max(1.0) as u32;
+        let rows = ((self.people.len() as f32 / columns as f32).ceil().max(1.0)) as u32;
         let mut agents: Vec<VisualAgent> = self
             .people
             .iter()
@@ -815,8 +844,8 @@ impl Simulation {
                 id: p.id,
                 kind: "person".into(),
                 region: p.region,
-                x: ((p.id % 100) as f32 / 100.0),
-                y: ((p.id / 100 % 100) as f32 / 100.0),
+                x: ((p.id % columns) as f32 + 0.5) / columns as f32,
+                y: ((p.id / columns) as f32 + 0.5) / rows as f32,
                 size: (p.wealth.max(1.0).sqrt() as f32 / 9.0).clamp(2.5, 14.0),
                 risk_score: p.risk_score as f32,
                 employed: p.employed,
