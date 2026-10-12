@@ -343,6 +343,8 @@ pub struct VisualAgent {
     pub id: u32,
     pub kind: String,
     pub region: u16,
+    #[serde(default)]
+    pub sector: u16,
     pub x: f32,
     pub y: f32,
     pub size: f32,
@@ -2574,6 +2576,7 @@ impl Simulation {
                 id: p.id,
                 kind: "person".into(),
                 region: p.region,
+                sector: 0,
                 x: ((p.id % columns) as f32 + 0.5) / columns as f32,
                 y: ((p.id / columns) as f32 + 0.5) / rows as f32,
                 size: (p.wealth.max(1.0).sqrt() as f32 / 9.0).clamp(2.5, 14.0),
@@ -2588,6 +2591,7 @@ impl Simulation {
                 id: 1_000_000 + region as u32,
                 kind: "market".into(),
                 region,
+                sector: 0,
                 x: 0.1 + region as f32 * 0.8 / self.config.regions.max(1) as f32,
                 y: 0.88,
                 size: 12.0,
@@ -2602,6 +2606,7 @@ impl Simulation {
                 id: company.id,
                 kind: "company".into(),
                 region: company.region,
+                sector: company.sector,
                 x: 0.1
                     + ((index % self.config.regions.max(1)) as f32 + 0.35) * 0.8
                         / self.config.regions.max(1) as f32,
@@ -2618,6 +2623,7 @@ impl Simulation {
                 id: bank.id,
                 kind: "bank".into(),
                 region: bank.region,
+                sector: 0,
                 x: 0.12
                     + ((index % self.config.regions.max(1)) as f32 + 0.65) * 0.8
                         / self.config.regions.max(1) as f32,
@@ -2633,6 +2639,7 @@ impl Simulation {
             id: self.government.id,
             kind: "government".into(),
             region: 0,
+            sector: 0,
             x: 0.08,
             y: 0.08,
             size: (self.government.debt.max(1.0).sqrt() as f32 / 35.0).clamp(8.0, 20.0),
@@ -2645,6 +2652,7 @@ impl Simulation {
             id: self.central_bank.id,
             kind: "central_bank".into(),
             region: 0,
+            sector: 0,
             x: 0.5,
             y: 0.08,
             size: 18.0,
