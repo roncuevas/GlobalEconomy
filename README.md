@@ -13,6 +13,8 @@ cd web && npm install && npm run dev
 
 El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 
+Con el servidor ejecutándose, el smoke test de contrato se puede repetir con `node scripts/api-smoke.mjs`. Para una corrida aislada en otro puerto y directorio, usa `GLOBALECONOMY_PORT=8090 GLOBALECONOMY_DATA_DIR=/tmp/globaleconomy-smoke cargo run --release` y, en otra terminal, `GLOBALECONOMY_BASE_URL=http://127.0.0.1:8090 node scripts/api-smoke.mjs`.
+
 ## API mínima
 
 - `POST /api/runs` crea una corrida.
