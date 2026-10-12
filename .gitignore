@@ -2,5 +2,6 @@
 /web/node_modules/
 /web/dist/
 /web/*.tsbuildinfo
+/data/runs/
 .DS_Store
 

@@ -9,7 +9,12 @@ use axum::{
 use chrono::{DateTime, Utc};
 use globaleconomy::{PolicyConfig, PolicyMode, RunConfig, Simulation, Snapshot};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path as FsPath, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use uuid::Uuid;
@@ -17,7 +22,9 @@ use uuid::Uuid;
 #[derive(Clone)]
 struct AppState {
     runs: Arc<RwLock<HashMap<Uuid, RunRecord>>>,
+    storage_dir: Arc<PathBuf>,
 }
+#[derive(Serialize, Deserialize)]
 struct RunRecord {
     sim: Simulation,
     status: String,
@@ -68,12 +75,17 @@ struct ComparisonResponse {
 }
 
 const HISTORY_LIMIT: usize = 240;
+const DATA_DIR_ENV: &str = "GLOBALECONOMY_DATA_DIR";
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
+    let storage_dir =
+        PathBuf::from(std::env::var(DATA_DIR_ENV).unwrap_or_else(|_| "data/runs".to_string()));
+    let runs = load_runs(&storage_dir);
     let state = AppState {
-        runs: Arc::new(RwLock::new(HashMap::new())),
+        runs: Arc::new(RwLock::new(runs)),
+        storage_dir: Arc::new(storage_dir),
     };
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -104,6 +116,68 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
+fn run_path(storage_dir: &FsPath, id: Uuid) -> PathBuf {
+    storage_dir.join(format!("run-{id}.json"))
+}
+
+fn load_runs(storage_dir: &FsPath) -> HashMap<Uuid, RunRecord> {
+    if let Err(error) = fs::create_dir_all(storage_dir) {
+        eprintln!("could not create local run storage at {storage_dir:?}: {error}");
+        return HashMap::new();
+    }
+    let mut runs = HashMap::new();
+    let Ok(entries) = fs::read_dir(storage_dir) else {
+        return runs;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(id_text) = name
+            .strip_prefix("run-")
+            .and_then(|name| name.strip_suffix(".json"))
+        else {
+            continue;
+        };
+        let Ok(id) = Uuid::parse_str(id_text) else {
+            eprintln!("ignoring local run with invalid id: {path:?}");
+            continue;
+        };
+        let Ok(bytes) = fs::read(&path) else {
+            eprintln!("could not read local run: {path:?}");
+            continue;
+        };
+        match serde_json::from_slice::<RunRecord>(&bytes) {
+            Ok(record) => {
+                runs.insert(id, record);
+            }
+            Err(error) => eprintln!("ignoring corrupt local run {path:?}: {error}"),
+        }
+    }
+    runs
+}
+
+fn persist_run(storage_dir: &FsPath, id: Uuid, record: &RunRecord) {
+    if let Err(error) = fs::create_dir_all(storage_dir) {
+        eprintln!("could not create local run storage at {storage_dir:?}: {error}");
+        return;
+    }
+    let path = run_path(storage_dir, id);
+    let temporary = path.with_extension("json.tmp");
+    match serde_json::to_vec(record) {
+        Ok(bytes) => {
+            if let Err(error) =
+                fs::write(&temporary, bytes).and_then(|_| fs::rename(&temporary, &path))
+            {
+                eprintln!("could not persist local run {path:?}: {error}");
+                let _ = fs::remove_file(temporary);
+            }
+        }
+        Err(error) => eprintln!("could not serialize local run {id}: {error}"),
+    }
+}
+
 async fn create_run(
     State(state): State<AppState>,
     Json(config): Json<RunConfig>,
@@ -118,15 +192,14 @@ async fn create_run(
         created_at,
         config_hash: sim.config_hash(),
     };
-    state.runs.write().await.insert(
-        id,
-        RunRecord {
-            sim,
-            status: "paused".into(),
-            created_at,
-            history: vec![initial_snapshot],
-        },
-    );
+    let record = RunRecord {
+        sim,
+        status: "paused".into(),
+        created_at,
+        history: vec![initial_snapshot],
+    };
+    persist_run(&state.storage_dir, id, &record);
+    state.runs.write().await.insert(id, record);
     Json(response)
 }
 
@@ -191,6 +264,7 @@ async fn start_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl 
     match runs.get_mut(&id) {
         Some(r) => {
             r.status = "running".into();
+            persist_run(&state.storage_dir, id, r);
             Json(StatusResponse {
                 run_id: id,
                 status: r.status.clone(),
@@ -206,6 +280,7 @@ async fn pause_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl 
     match runs.get_mut(&id) {
         Some(r) => {
             r.status = "paused".into();
+            persist_run(&state.storage_dir, id, r);
             Json(StatusResponse {
                 run_id: id,
                 status: r.status.clone(),
@@ -226,6 +301,7 @@ async fn step_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl I
                 let excess = r.history.len() - HISTORY_LIMIT;
                 r.history.drain(..excess);
             }
+            persist_run(&state.storage_dir, id, r);
             Json(snapshot).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
@@ -239,6 +315,7 @@ async fn reset_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl 
             r.status = "paused".into();
             r.history.clear();
             r.history.push(r.sim.snapshot());
+            persist_run(&state.storage_dir, id, r);
             Json(StatusResponse {
                 run_id: id,
                 status: r.status.clone(),
@@ -259,6 +336,7 @@ async fn update_policy(
         Some(r) => {
             r.sim.apply_policy(policy);
             remember(r);
+            persist_run(&state.storage_dir, id, r);
             Json(r.sim.snapshot()).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
@@ -278,6 +356,7 @@ async fn apply_next_policy(
         Some(r) => {
             if r.sim.apply_next_policy() {
                 remember(r);
+                persist_run(&state.storage_dir, id, r);
                 Json(r.sim.snapshot()).into_response()
             } else {
                 StatusCode::CONFLICT.into_response()
@@ -297,6 +376,7 @@ async fn update_policy_mode(
         Some(r) => {
             r.sim.config.policy_mode = request.mode;
             remember(r);
+            persist_run(&state.storage_dir, id, r);
             Json(r.sim.snapshot()).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
@@ -312,6 +392,7 @@ async fn apply_countermeasure(
         Some(r) => {
             if r.sim.apply_countermeasure() {
                 remember(r);
+                persist_run(&state.storage_dir, id, r);
                 Json(r.sim.snapshot()).into_response()
             } else {
                 StatusCode::CONFLICT.into_response()
@@ -378,6 +459,8 @@ async fn stream_socket(mut socket: WebSocket, state: AppState, id: Uuid) {
             };
             if r.status == "running" {
                 r.sim.step();
+                remember(r);
+                persist_run(&state.storage_dir, id, r);
             }
             (r.status.clone(), r.sim.snapshot())
         };
