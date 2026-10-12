@@ -35,6 +35,9 @@ const TERM_HELP: Record<string,string> = {
   'Impuesto':'Pago de una persona o empresa al gobierno según sus ingresos declarados.',
   'Transferencia':'Pago del gobierno a una persona sin una venta directa a cambio.',
   'Compra':'Pago de una persona a una empresa por bienes o servicios.',
+  'Crédito':'Dinero creado por un banco mediante un préstamo explicable.',
+  'Amortización':'Pago parcial que reduce el saldo de una deuda.',
+  'Quiebra':'Liquidación de una empresa que no puede cubrir sus obligaciones.',
   'Empresa':'Entidad que produce, contrata personas, vende, acumula caja y puede endeudarse.',
   'Banco':'Intermediario que administra depósitos, reservas y préstamos.',
   'Gobierno':'Institución que recauda impuestos, gasta, transfiere recursos y emite deuda.',
@@ -133,7 +136,7 @@ function App(){
   </main>
 }
 function compact(n:number){return n>=1000000?`${(n/1000000).toFixed(1)}M`:n>=1000?`${(n/1000).toFixed(1)}k`:n.toFixed(0)}
-function transactionLabel(kind:string){return ({wage:'Nómina',tax:'Impuesto',transfer:'Transferencia',purchase:'Compra'} as Record<string,string>)[kind]??kind}
+function transactionLabel(kind:string){return ({wage:'Nómina',tax:'Impuesto',transfer:'Transferencia',purchase:'Compra',loan:'Crédito',repayment:'Amortización',bankruptcy:'Quiebra'} as Record<string,string>)[kind]??kind}
 function entityLabel(id:number){if(id>=6_000_000)return 'Banco central';if(id>=5_000_000)return 'Gobierno';if(id>=4_000_000)return 'Banco';if(id>=3_000_000)return 'Empresa';return `Persona #${id}`}
 function Stat({label,value}:{label:string;value:string|number}){return <div className="stat"><small><Tip term={label}/></small><strong>{value}</strong></div>}
 function Slider({label,value,min,max,step,suffix,onChange}:{label:string;value:number;min:number;max:number;step:number;suffix:string;onChange:(v:number)=>void}){return <label className="slider"><span><Tip term={label}/><b>{suffix==='%'?(value*100).toFixed(1)+'%':compact(value)+suffix}</b></span><input aria-label={label} title={TERM_HELP[label]} type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(Number(e.target.value))}/></label>}
