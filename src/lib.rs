@@ -281,6 +281,10 @@ pub struct Metrics {
     pub countermeasures: u64,
     pub systemic_risk: f64,
     pub security_level: f64,
+    #[serde(default)]
+    pub aml_alerts: u64,
+    #[serde(default)]
+    pub tax_alerts: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -324,6 +328,8 @@ pub struct Snapshot {
     pub central_bank: CentralBank,
     pub markets: Vec<Market>,
     pub transactions: Vec<Transaction>,
+    #[serde(default)]
+    pub compliance_alerts: Vec<ComplianceAlert>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -358,6 +364,18 @@ pub struct RiskEvent {
     pub before: MetricFrame,
     pub after_policy: Option<MetricFrame>,
     pub after_countermeasure: Option<MetricFrame>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ComplianceAlert {
+    pub id: u64,
+    pub tick: u64,
+    pub entity_id: u32,
+    pub category: String,
+    pub severity: f64,
+    pub reason: String,
+    pub related_transaction_ids: Vec<u64>,
+    pub status: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -398,6 +416,8 @@ pub struct Simulation {
     systemic_risk: f64,
     security_level: f64,
     next_transaction_id: u64,
+    #[serde(default)]
+    compliance_alerts: Vec<ComplianceAlert>,
 }
 
 impl Simulation {
@@ -520,6 +540,7 @@ impl Simulation {
             systemic_risk: 0.0,
             security_level: 0.25,
             next_transaction_id: 0,
+            compliance_alerts: Vec::new(),
         };
         sim.recalculate_metrics();
         sim
@@ -1837,6 +1858,107 @@ impl Simulation {
         self.central_bank.reserves = deposits * 0.2;
     }
 
+    fn detect_compliance(&mut self) {
+        let tick_transactions: Vec<Transaction> = self
+            .transactions
+            .iter()
+            .filter(|transaction| transaction.tick == self.tick)
+            .cloned()
+            .collect();
+        let next_id = self.compliance_alerts.len() as u64;
+        let mut alerts = Vec::new();
+        for person in &self.people {
+            let related: Vec<&Transaction> = tick_transactions
+                .iter()
+                .filter(|transaction| transaction.from == person.id || transaction.to == person.id)
+                .collect();
+            let inflow: f64 = related
+                .iter()
+                .filter(|transaction| transaction.to == person.id)
+                .map(|transaction| transaction.amount)
+                .sum();
+            let outflow: f64 = related
+                .iter()
+                .filter(|transaction| transaction.from == person.id)
+                .map(|transaction| transaction.amount)
+                .sum();
+            let loan = related
+                .iter()
+                .find(|transaction| transaction.kind == "loan");
+            if let Some(loan) = loan {
+                if loan.amount > person.income * 8.0 + 500.0 {
+                    alerts.push(ComplianceAlert {
+                        id: next_id + alerts.len() as u64,
+                        tick: self.tick,
+                        entity_id: person.id,
+                        category: "aml".into(),
+                        severity: ((loan.amount - person.income * 8.0) / (loan.amount + 1.0))
+                            .clamp(0.0, 1.0),
+                        reason:
+                            "crédito recibido incompatible con el ingreso declarado del periodo"
+                                .into(),
+                        related_transaction_ids: related
+                            .iter()
+                            .map(|transaction| transaction.id)
+                            .collect(),
+                        status: "open".into(),
+                    });
+                }
+            }
+            if outflow > person.income + inflow * 0.35 + 1_000.0 && person.wealth < outflow * 0.5 {
+                alerts.push(ComplianceAlert {
+                    id: next_id + alerts.len() as u64,
+                    tick: self.tick,
+                    entity_id: person.id,
+                    category: "tax_evasion".into(),
+                    severity: ((outflow - person.income) / (outflow + 1.0)).clamp(0.0, 1.0),
+                    reason: "flujo de salida incompatible con ingreso, patrimonio y transferencias observadas".into(),
+                    related_transaction_ids: related.iter().map(|transaction| transaction.id).collect(),
+                    status: "open".into(),
+                });
+            }
+        }
+        for company in &self.companies {
+            let related: Vec<&Transaction> = tick_transactions
+                .iter()
+                .filter(|transaction| {
+                    transaction.from == company.id || transaction.to == company.id
+                })
+                .collect();
+            let sales: f64 = related
+                .iter()
+                .filter(|transaction| {
+                    transaction.to == company.id && transaction.kind == "purchase"
+                })
+                .map(|transaction| transaction.amount)
+                .sum();
+            if sales > 1_000.0 && company.cash < sales * 0.1 {
+                alerts.push(ComplianceAlert {
+                    id: next_id + alerts.len() as u64,
+                    tick: self.tick,
+                    entity_id: company.id,
+                    category: "tax_evasion".into(),
+                    severity: (1.0 - company.cash / sales).clamp(0.0, 1.0),
+                    reason: "ventas observadas altas frente a caja declarada y utilidad disponible"
+                        .into(),
+                    related_transaction_ids: related
+                        .iter()
+                        .map(|transaction| transaction.id)
+                        .collect(),
+                    status: "open".into(),
+                });
+            }
+        }
+        if !alerts.is_empty() {
+            self.systemic_risk = (self.systemic_risk + alerts.len() as f64 * 0.01).min(1.0);
+        }
+        self.compliance_alerts.extend(alerts);
+        if self.compliance_alerts.len() > 500 {
+            let excess = self.compliance_alerts.len() - 500;
+            self.compliance_alerts.drain(..excess);
+        }
+    }
+
     fn process_credit_cycle(&mut self, price: f64) {
         if self.banks.is_empty() {
             return;
@@ -2087,6 +2209,7 @@ impl Simulation {
         }
         self.process_credit_cycle(price);
         self.settle_institution_tick();
+        self.detect_compliance();
         self.tick += 1;
         self.recalculate_metrics();
         self.snapshot()
@@ -2159,6 +2282,16 @@ impl Simulation {
                 .count() as u64,
             systemic_risk: self.systemic_risk,
             security_level: self.security_level,
+            aml_alerts: self
+                .compliance_alerts
+                .iter()
+                .filter(|alert| alert.category == "aml" && alert.status == "open")
+                .count() as u64,
+            tax_alerts: self
+                .compliance_alerts
+                .iter()
+                .filter(|alert| alert.category == "tax_evasion" && alert.status == "open")
+                .count() as u64,
         };
     }
 
@@ -2334,6 +2467,13 @@ impl Simulation {
                 .iter()
                 .rev()
                 .take(2_500)
+                .cloned()
+                .collect(),
+            compliance_alerts: self
+                .compliance_alerts
+                .iter()
+                .rev()
+                .take(100)
                 .cloned()
                 .collect(),
         }
@@ -2595,6 +2735,38 @@ mod tests {
             .money_events
             .iter()
             .any(|event| event.kind == "credit_creation"));
+        assert!(s
+            .compliance_alerts
+            .iter()
+            .any(|alert| alert.category == "aml" && alert.entity_id == 0));
+    }
+
+    #[test]
+    fn tax_alert_explains_unmatched_outflow() {
+        let mut s = Simulation::new(config(42));
+        s.people[0].money = 0.0;
+        s.people[0].wealth = 0.0;
+        s.transactions.push(Transaction {
+            id: 77,
+            tick: 0,
+            from: 0,
+            to: 3_000_000,
+            kind: "purchase".into(),
+            amount: 2_500.0,
+            region: s.people[0].region,
+            reason: "flujo sintético de prueba".into(),
+        });
+
+        s.detect_compliance();
+
+        let alert = s
+            .compliance_alerts
+            .iter()
+            .find(|alert| alert.category == "tax_evasion")
+            .expect("tax mismatch should create an alert");
+        assert_eq!(alert.entity_id, 0);
+        assert_eq!(alert.related_transaction_ids, vec![77]);
+        assert!(alert.reason.contains("flujo"));
     }
 
     #[test]
