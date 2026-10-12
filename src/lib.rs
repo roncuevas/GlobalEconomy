@@ -1837,6 +1837,156 @@ impl Simulation {
         self.central_bank.reserves = deposits * 0.2;
     }
 
+    fn process_credit_cycle(&mut self, price: f64) {
+        if self.banks.is_empty() {
+            return;
+        }
+        let mut available_credit: f64 = self
+            .banks
+            .iter()
+            .map(|bank| (bank.reserves * 4.0 - bank.loans).max(0.0))
+            .sum();
+        let minimum_loan = (price * 4.0).max(50.0);
+        for index in 0..self.people.len() {
+            if available_credit < minimum_loan
+                || self.people[index].money >= price * 2.0
+                || self.people[index].need < 0.8
+            {
+                continue;
+            }
+            let amount = minimum_loan.min(available_credit);
+            let bank_index = index % self.banks.len();
+            let bank_id = self.banks[bank_index].id;
+            self.people[index].money += amount;
+            self.people[index].debt += amount;
+            self.private_debt += amount;
+            self.debt_created_this_tick += amount;
+            self.money_created_this_tick += amount;
+            self.money_created_total += amount;
+            self.banks[bank_index].loans += amount;
+            available_credit -= amount;
+            self.record_transaction(
+                bank_id,
+                self.people[index].id,
+                "loan",
+                amount,
+                self.people[index].region,
+                "crédito de liquidez para necesidad básica",
+            );
+        }
+        for index in 0..self.companies.len() {
+            if available_credit < minimum_loan || !self.companies[index].active {
+                continue;
+            }
+            let required =
+                self.companies[index].employees as f64 * self.config.scenario_config.wage;
+            if self.companies[index].cash >= required * 0.75 {
+                continue;
+            }
+            let amount = (required - self.companies[index].cash)
+                .max(minimum_loan)
+                .min(available_credit);
+            let bank_index = index % self.banks.len();
+            let bank_id = self.banks[bank_index].id;
+            self.companies[index].cash += amount;
+            self.companies[index].debt += amount;
+            self.private_debt += amount;
+            self.debt_created_this_tick += amount;
+            self.money_created_this_tick += amount;
+            self.money_created_total += amount;
+            self.banks[bank_index].loans += amount;
+            available_credit -= amount;
+            self.record_transaction(
+                bank_id,
+                self.companies[index].id,
+                "loan",
+                amount,
+                self.companies[index].region,
+                "crédito de capital de trabajo",
+            );
+        }
+        for index in 0..self.people.len() {
+            if self.people[index].debt <= 0.0 || self.people[index].money <= price * 6.0 {
+                continue;
+            }
+            let amount = (self.people[index].debt * 0.02)
+                .min(self.people[index].money * 0.05)
+                .max(0.0);
+            let bank_index = index % self.banks.len();
+            self.people[index].money -= amount;
+            self.people[index].debt = (self.people[index].debt - amount).max(0.0);
+            self.private_debt = (self.private_debt - amount).max(0.0);
+            self.record_transaction(
+                self.people[index].id,
+                self.banks[bank_index].id,
+                "repayment",
+                amount,
+                self.people[index].region,
+                "amortización de crédito personal",
+            );
+        }
+        for index in 0..self.companies.len() {
+            if !self.companies[index].active
+                || self.companies[index].debt <= 0.0
+                || self.companies[index].cash <= minimum_loan
+            {
+                continue;
+            }
+            let amount = (self.companies[index].debt * 0.03).min(self.companies[index].cash * 0.04);
+            let company_id = self.companies[index].id;
+            let region = self.companies[index].region;
+            self.companies[index].cash -= amount;
+            self.companies[index].debt = (self.companies[index].debt - amount).max(0.0);
+            self.private_debt = (self.private_debt - amount).max(0.0);
+            self.record_transaction(
+                company_id,
+                self.banks[index % self.banks.len()].id,
+                "repayment",
+                amount,
+                region,
+                "amortización de crédito empresarial",
+            );
+        }
+        for index in 0..self.companies.len() {
+            if self.companies[index].active
+                && self.companies[index].debt > self.companies[index].cash * 2.0
+                && self.companies[index].cash < minimum_loan
+            {
+                let company_id = self.companies[index].id;
+                let region = self.companies[index].region;
+                let loss = self.companies[index].debt;
+                self.companies[index].active = false;
+                self.companies[index].inventory = 0.0;
+                self.companies[index].debt = 0.0;
+                self.private_debt = (self.private_debt - loss).max(0.0);
+                self.events.push(EconomicEvent {
+                    tick: self.tick,
+                    event_type: "bankruptcy".into(),
+                    agent_id: company_id,
+                    region,
+                    amount: loss,
+                    reason: "insolvencia: deuda superior al doble de la caja".into(),
+                });
+                self.record_transaction(
+                    company_id,
+                    self.government.id,
+                    "bankruptcy",
+                    loss,
+                    region,
+                    "liquidación de empresa insolvente",
+                );
+            }
+        }
+        if self.money_created_this_tick > 0.0 {
+            self.money_events.push(MoneyEvent {
+                tick: self.tick,
+                kind: "credit_creation".into(),
+                amount: self.money_created_this_tick,
+                reason: "crédito bancario endógeno del ciclo institucional".into(),
+            });
+        }
+    }
+
     pub fn step(&mut self) -> Snapshot {
         if self.tick >= self.config.ticks {
             return self.snapshot();
@@ -1935,6 +2085,7 @@ impl Simulation {
                 person.employed = !person.employed;
             }
         }
+        self.process_credit_cycle(price);
         self.settle_institution_tick();
         self.tick += 1;
         self.recalculate_metrics();
@@ -2424,6 +2575,46 @@ mod tests {
             .all(|tx| tx.tick == 0 && tx.amount > 0.0));
         let ids: std::collections::HashSet<u64> = s.transactions.iter().map(|tx| tx.id).collect();
         assert_eq!(ids.len(), s.transactions.len());
+    }
+
+    #[test]
+    fn credit_cycle_creates_traceable_loan_and_debt() {
+        let mut config = config(42);
+        config.scenario_config.food_price = 1_000.0;
+        let mut s = Simulation::new(config);
+        s.people[0].money = 0.0;
+        s.people[0].need = 1.0;
+        s.people[0].employed = false;
+
+        s.step();
+
+        assert!(s.transactions.iter().any(|tx| tx.kind == "loan"));
+        assert!(s.people.iter().any(|person| person.debt > 0.0));
+        assert!(s.private_debt > 0.0);
+        assert!(s
+            .money_events
+            .iter()
+            .any(|event| event.kind == "credit_creation"));
+    }
+
+    #[test]
+    fn insolvent_company_is_liquidated_with_explainable_event() {
+        let mut s = Simulation::new(config(42));
+        let company = &mut s.companies[0];
+        company.cash = 0.0;
+        company.debt = 1_000.0;
+
+        s.process_credit_cycle(12.0);
+
+        assert!(!s.companies[0].active);
+        assert!(s
+            .events
+            .iter()
+            .any(|event| event.event_type == "bankruptcy"));
+        assert!(s
+            .transactions
+            .iter()
+            .any(|transaction| transaction.kind == "bankruptcy"));
     }
 
     #[test]
