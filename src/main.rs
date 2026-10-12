@@ -814,9 +814,57 @@ async fn stream_socket(mut socket: WebSocket, state: AppState, id: Uuid) {
             }
             (r.status.clone(), r.sim.snapshot())
         };
-        let payload = serde_json::json!({"type":"snapshot","status":status,"data":snap});
+        let payload = serde_json::json!({"type":"snapshot","status":&status,"data":&snap});
         if socket
             .send(Message::Text(payload.to_string().into()))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let metric_payload = serde_json::json!({
+            "type": "metric_update",
+            "data": {"tick": snap.tick, "metrics": &snap.metrics}
+        });
+        if socket
+            .send(Message::Text(metric_payload.to_string().into()))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let transaction_payload = serde_json::json!({
+            "type": "transaction",
+            "data": snap.transactions.iter().take(100).collect::<Vec<_>>()
+        });
+        if socket
+            .send(Message::Text(transaction_payload.to_string().into()))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let alert_payload = serde_json::json!({
+            "type": "alert",
+            "data": snap
+                .compliance_alerts
+                .iter()
+                .filter(|alert| alert.tick == snap.tick.saturating_sub(1))
+                .collect::<Vec<_>>()
+        });
+        if socket
+            .send(Message::Text(alert_payload.to_string().into()))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let status_payload = serde_json::json!({
+            "type": "run_status",
+            "data": {"run_id": id, "status": &status, "tick": snap.tick}
+        });
+        if socket
+            .send(Message::Text(status_payload.to_string().into()))
             .await
             .is_err()
         {
