@@ -6,17 +6,26 @@ description = "Deterministic agent-based economic laboratory"
 license = "MIT"
 
 [dependencies]
-axum = { version = "0.8", features = ["ws"] }
-chrono = { version = "0.4", features = ["serde"] }
+axum = { version = "0.8", features = ["ws"], optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
 rand = "0.9"
 rand_chacha = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-tokio = { version = "1", features = ["full"] }
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
-uuid = { version = "1", features = ["v4", "serde"] }
+tokio = { version = "1", features = ["full"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"], optional = true }
+tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
+uuid = { version = "1", features = ["v4", "serde"], optional = true }
+
+[features]
+default = ["server"]
+server = ["dep:axum", "dep:chrono", "dep:tokio", "dep:tower-http", "dep:tracing-subscriber", "dep:uuid"]
+
+[[bin]]
+name = "globaleconomy"
+path = "src/main.rs"
+required-features = ["server"]
 
 [profile.release]
 lto = true

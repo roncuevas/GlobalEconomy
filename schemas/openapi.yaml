@@ -3,6 +3,10 @@ info:
   title: GlobalEconomy API
   version: 0.1.0
 paths:
+  /health:
+    get:
+      summary: Check API health
+      responses: { '200': { description: API is ready } }
   /api/runs:
     post:
       summary: Create deterministic simulation run
@@ -23,6 +27,26 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/CompareRequest' } } }
       responses: { '200': { description: Comparison result } }
+  /api/runs/{id}/start:
+    post:
+      summary: Start a simulation run
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Running status }, '404': { description: Run not found } }
+  /api/runs/{id}/pause:
+    post:
+      summary: Pause a simulation run
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Paused status }, '404': { description: Run not found } }
+  /api/runs/{id}/step:
+    post:
+      summary: Advance exactly one simulation tick
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Updated snapshot }, '404': { description: Run not found } }
+  /api/runs/{id}/reset:
+    post:
+      summary: Reset a run to its initial state
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Reset status }, '404': { description: Run not found } }
   /api/runs/{id}/snapshot:
     get:
       summary: Get visual snapshot
@@ -59,6 +83,24 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/PolicyConfig' } } }
       responses: { '200': { description: Updated snapshot } }
+  /api/runs/{id}/policy/next:
+    post:
+      summary: Apply the next historical monetary policy
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Updated snapshot }, '409': { description: No pending policy } }
+  /api/runs/{id}/policy-mode:
+    post:
+      summary: Select manual or automatic policy progression
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [mode], properties: { mode: { type: string, enum: [manual, automatic] } } } } }
+      responses: { '200': { description: Updated snapshot } }
+  /api/runs/{id}/risk/countermeasure:
+    post:
+      summary: Apply the latest monetary risk countermeasure
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Updated snapshot }, '409': { description: No open risk } }
   /api/runs/{id}/transactions:
     get:
       summary: Get institutional transactions from the latest tick
@@ -67,6 +109,16 @@ paths:
         '200':
           description: Transactions
           content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Transaction' } } } }
+  /api/runs/{id}/events:
+    get:
+      summary: Get economic events from the latest tick
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Economic events } }
+  /api/runs/{id}/stream:
+    get:
+      summary: Stream live snapshots over WebSocket
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '101': { description: WebSocket upgrade } }
 components:
   schemas:
     RunConfig:
@@ -107,6 +159,7 @@ components:
         agents: { type: array, items: { type: object } }
         metrics: { type: object }
         compliance_alerts: { type: array, items: { $ref: '#/components/schemas/ComplianceAlert' } }
+        external_shocks: { type: array, items: { $ref: '#/components/schemas/ExternalShock' } }
     PolicyConfig:
       type: object
       properties:
@@ -116,6 +169,7 @@ components:
         liquidity_injection: { type: number }
     ScenarioConfig:
       type: object
+      required: [food_price, wage]
       properties:
         food_price: { type: number }
         wage: { type: number }

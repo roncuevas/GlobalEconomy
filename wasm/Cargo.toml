@@ -1,0 +1,14 @@
+[package]
+name = "globaleconomy-wasm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+globaleconomy = { path = "..", default-features = false }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+serde_json = "1"
+wasm-bindgen = "0.2"
