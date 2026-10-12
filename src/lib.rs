@@ -164,6 +164,11 @@ pub struct Metrics {
     pub debt_created_this_tick: f64,
     pub monetary_regime: String,
     pub wealth_shock: f64,
+    pub adverse_events: u64,
+    pub open_risks: u64,
+    pub countermeasures: u64,
+    pub systemic_risk: f64,
+    pub security_level: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -200,6 +205,41 @@ pub struct Snapshot {
     pub active_policy: Option<MonetaryPolicy>,
     pub next_policy: Option<MonetaryPolicy>,
     pub policy_mode: PolicyMode,
+    pub risk_events: Vec<RiskEvent>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MetricFrame {
+    pub tick: u64,
+    pub gdp: f64,
+    pub gini: f64,
+    pub unemployment: f64,
+    pub inflation: f64,
+    pub money_supply: f64,
+    pub government_debt: f64,
+    pub private_debt: f64,
+    pub mean_wealth: f64,
+    pub systemic_risk: f64,
+    pub security_level: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RiskEvent {
+    pub id: u64,
+    pub policy_tick: u64,
+    pub policy_name: String,
+    pub category: String,
+    pub name: String,
+    pub description: String,
+    pub detection_reason: String,
+    pub severity: f64,
+    pub detected_at: u64,
+    pub countermeasure_name: String,
+    pub countermeasure_description: String,
+    pub countermeasure_applied: bool,
+    pub before: MetricFrame,
+    pub after_policy: Option<MetricFrame>,
+    pub after_countermeasure: Option<MetricFrame>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -228,6 +268,9 @@ pub struct Simulation {
     wealth_shock_this_tick: f64,
     last_policy_apply_tick: u64,
     pending_policy: Option<MonetaryPolicy>,
+    risk_events: Vec<RiskEvent>,
+    systemic_risk: f64,
+    security_level: f64,
 }
 
 impl Simulation {
@@ -283,6 +326,9 @@ impl Simulation {
             wealth_shock_this_tick: 0.0,
             last_policy_apply_tick: 0,
             pending_policy: None,
+            risk_events: Vec::new(),
+            systemic_risk: 0.0,
+            security_level: 0.25,
         };
         sim.recalculate_metrics();
         sim
@@ -1156,6 +1202,175 @@ impl Simulation {
         history
     }
 
+    fn metric_frame(&self) -> MetricFrame {
+        MetricFrame {
+            tick: self.tick,
+            gdp: self.metrics.gdp,
+            gini: self.metrics.gini,
+            unemployment: self.metrics.unemployment,
+            inflation: self.metrics.inflation,
+            money_supply: self.metrics.money_supply,
+            government_debt: self.metrics.government_debt,
+            private_debt: self.metrics.private_debt,
+            mean_wealth: self.metrics.mean_wealth,
+            systemic_risk: self.systemic_risk,
+            security_level: self.security_level,
+        }
+    }
+
+    fn risk_profile(policy: &MonetaryPolicy) -> (String, String, String, String, String, String) {
+        let name = policy.name.as_str();
+        if name.contains("Papel") || name.contains("Dinero") || name.contains("billete") {
+            return (
+                "currency_security".into(),
+                "Falsificación y pérdida de confianza".into(),
+                "Aumenta la circulación de piezas cuya autenticidad no puede verificarse con facilidad; el problema se observa como presión sobre la confianza y el dinero aceptado.".into(),
+                "La presión de falsificación y la caída de confianza superan el umbral de alerta.".into(),
+                "Blindaje de emisión".into(),
+                "Renovar diseños, autenticación pública y trazabilidad de emisiones para proteger la confianza.".into(),
+            );
+        }
+        if name.contains("Banca") || name.contains("crédito") || name.contains("LTRO") || name.contains("reservas") {
+            return (
+                "bank_run".into(),
+                "Corrida bancaria y descalce de liquidez".into(),
+                "Los retiros potenciales crecen más rápido que las reservas líquidas y el crédito se concentra en pocos intermediarios.".into(),
+                "La liquidez disponible queda por debajo de las obligaciones de corto plazo y sube el riesgo sistémico.".into(),
+                "Prestamista de última instancia".into(),
+                "Abrir liquidez de emergencia contra garantías, reforzar reservas y publicar reglas de acceso.".into(),
+            );
+        }
+        if name.contains("oro") || name.contains("convertibilidad") || name.contains("Smithsonian") {
+            return (
+                "reserve_drain".into(),
+                "Fuga de reservas y presión sobre la paridad".into(),
+                "La paridad fija pierde credibilidad cuando las reservas no alcanzan para sostener todos los canjes prometidos.".into(),
+                "La deuda y los pagos externos crecen mientras cae el colchón de reservas.".into(),
+                "Defensa de reservas".into(),
+                "Ajustar temporalmente la liquidez, transparentar reservas y permitir una paridad sostenible.".into(),
+            );
+        }
+        if name.contains("petróleo") || name.contains("Inflación") || name.contains("Gran inflación") {
+            return (
+                "supply_inflation".into(),
+                "Shock de oferta e inflación desanclada".into(),
+                "Un aumento de costes reduce la producción mientras hogares y empresas anticipan que los precios seguirán subiendo.".into(),
+                "La inflación observada y esperada sube por encima de la estabilidad del escenario.".into(),
+                "Ancla antiinflacionaria".into(),
+                "Combinar comunicación creíble, apoyo focalizado y una normalización gradual que no destruya el empleo.".into(),
+            );
+        }
+        if name.contains("Burbuja") || name.contains("hipotecario") || name.contains("titulización") {
+            return (
+                "asset_bubble".into(),
+                "Burbuja de activos y apalancamiento".into(),
+                "El crédito barato y las expectativas de revalorización hacen crecer los activos más rápido que los ingresos que los respaldan.".into(),
+                "La deuda privada y los precios de activos crecen juntos hasta elevar la vulnerabilidad.".into(),
+                "Freno macroprudencial".into(),
+                "Elevar colchones de capital, limitar concentración y someter el crédito a pruebas de estrés.".into(),
+            );
+        }
+        if name.contains("cambi") || name.contains("Plaza") || name.contains("Louvre") || name.contains("ERM") || name.contains("flotantes") {
+            return (
+                "exchange_attack".into(),
+                "Ataque especulativo y tensión cambiaria".into(),
+                "Los flujos buscan anticiparse a una devaluación o a un cambio de régimen y amplifican la salida de capitales.".into(),
+                "La brecha entre la paridad administrada y los flujos financieros dispara la alerta cambiaria.".into(),
+                "Cortafuegos cambiario".into(),
+                "Usar reservas, líneas de liquidez y una comunicación coordinada para evitar ajustes desordenados.".into(),
+            );
+        }
+        if name.contains("deuda") || name.contains("reestructuración") || name.contains("soberana") {
+            return (
+                "sovereign_stress".into(),
+                "Estrés de deuda soberana".into(),
+                "El servicio de deuda y el refinanciamiento consumen recursos mientras un shock reduce ingresos públicos.".into(),
+                "La deuda aumenta más rápido que los ingresos y se acorta el plazo de refinanciamiento.".into(),
+                "Reperfilamiento preventivo".into(),
+                "Extender vencimientos, proteger gasto esencial y negociar antes del incumplimiento.".into(),
+            );
+        }
+        if name.contains("Crisis") || name.contains("Estallido") || name.contains("Recesión") {
+            return (
+                "liquidity_freeze".into(),
+                "Congelamiento de liquidez".into(),
+                "La desconfianza hace que los intermediarios retengan efectivo y reduzcan transacciones aun cuando existan activos.".into(),
+                "El volumen comercial cae y el riesgo sistémico sube durante varios ticks consecutivos.".into(),
+                "Facilidad de liquidez".into(),
+                "Restaurar pagos esenciales con liquidez temporal, garantías transparentes y resolución ordenada.".into(),
+            );
+        }
+        if name.contains("CBDC") || name.contains("Pagos") || name.contains("electrónicos") || name.contains("stablecoins") || name.contains("Cripto") {
+            return (
+                "payment_integrity".into(),
+                "Fraude y fragmentación de pagos".into(),
+                "La innovación incorpora nuevos intermediarios y fallos de autenticación que pueden fragmentar la unidad de cuenta.".into(),
+                "Aumentan las operaciones anómalas y la diferencia entre dinero aceptado y dinero declarado.".into(),
+                "Estándar de pagos seguros".into(),
+                "Exigir interoperabilidad, autenticación, reglas de respaldo y límites de concentración.".into(),
+            );
+        }
+        (
+            "confidence_shock".into(),
+            "Pérdida de confianza monetaria".into(),
+            "La comunidad empieza a preferir liquidez inmediata y reduce la aceptación de la unidad monetaria.".into(),
+            "Suben simultáneamente la volatilidad, el riesgo y la demanda precautoria de dinero.".into(),
+            "Refuerzo de credibilidad".into(),
+            "Publicar reglas verificables, estabilizar expectativas y proteger la liquidación de pagos.".into(),
+        )
+    }
+
+    fn detect_upcoming_risk(&mut self) {
+        let Some(policy) = self
+            .config
+            .monetary_history
+            .iter()
+            .find(|policy| {
+                policy.apply_tick > self.last_policy_apply_tick
+                    && (!policy.optional || self.config.catastrophes)
+                    && (self.tick + 1 >= policy.apply_tick.saturating_sub(1)
+                        || matches!(self.config.policy_mode, PolicyMode::Manual))
+            })
+            .cloned()
+        else { return; };
+        if self.risk_events.iter().any(|event| event.policy_tick == policy.apply_tick) {
+            return;
+        }
+        let (category, name, description, detection_reason, countermeasure_name, countermeasure_description) = Self::risk_profile(&policy);
+        self.systemic_risk = (self.systemic_risk + policy.private_credit_creation.abs() / 5_000_000.0 + 0.04).clamp(0.0, 1.0);
+        self.risk_events.push(RiskEvent {
+            id: self.risk_events.len() as u64,
+            policy_tick: policy.apply_tick,
+            policy_name: policy.name,
+            category,
+            name,
+            description,
+            detection_reason,
+            severity: (0.25 + self.systemic_risk * 0.65).clamp(0.0, 1.0),
+            detected_at: self.tick,
+            countermeasure_name,
+            countermeasure_description,
+            countermeasure_applied: false,
+            before: self.metric_frame(),
+            after_policy: None,
+            after_countermeasure: None,
+        });
+    }
+
+    pub fn apply_countermeasure(&mut self) -> bool {
+        let Some(index) = self.risk_events.iter().rposition(|event| !event.countermeasure_applied) else { return false; };
+        let category = self.risk_events[index].category.clone();
+        if category == "currency_security" || category == "payment_integrity" {
+            self.security_level = (self.security_level + 0.22).min(1.0);
+        }
+        self.systemic_risk = (self.systemic_risk - 0.18).max(0.0);
+        let after = self.metric_frame();
+        self.risk_events[index].countermeasure_applied = true;
+        self.risk_events[index].after_countermeasure = Some(after);
+        self.recalculate_metrics();
+        true
+    }
+
     fn apply_policy_event(&mut self, policy: &MonetaryPolicy) {
         self.config.policy_config.base_interest_rate = policy.base_interest_rate;
         self.config.policy_config.liquidity_injection = policy.liquidity_injection;
@@ -1178,9 +1393,19 @@ impl Simulation {
             });
         }
         self.last_policy_apply_tick = policy.apply_tick;
+        self.recalculate_metrics();
+        let after_policy = self.metric_frame();
+        if let Some(event) = self
+            .risk_events
+            .iter_mut()
+            .find(|event| event.policy_tick == policy.apply_tick)
+        {
+            event.after_policy = Some(after_policy);
+        }
     }
 
     pub fn apply_next_policy(&mut self) -> bool {
+        self.detect_upcoming_risk();
         let next = self
             .config
             .monetary_history
@@ -1205,6 +1430,7 @@ impl Simulation {
         self.money_created_this_tick = 0.0;
         self.debt_created_this_tick = 0.0;
         self.wealth_shock_this_tick = 0.0;
+        self.detect_upcoming_risk();
         let mut scheduled_policy = self.pending_policy.take();
         if let Some(policy) = scheduled_policy.as_ref() {
             self.debt_created_this_tick = policy.government_debt_change + policy.private_credit_creation;
@@ -1328,7 +1554,8 @@ impl Simulation {
             inflation: self.tick as f64 / 100_000.0,
             tax_revenue: income * tax_rate,
             trade_volume: self.events.iter().map(|e| e.amount).sum(),
-            alerts: self.people.iter().filter(|p| p.risk_score > 0.8).count() as u64,
+            alerts: self.people.iter().filter(|p| p.risk_score > 0.8).count() as u64
+                + self.risk_events.iter().filter(|event| !event.countermeasure_applied).count() as u64,
             mean_wealth: total / n,
             money_supply: self.people.iter().map(|p| p.money).sum(),
             interest_rate: self.config.policy_config.base_interest_rate,
@@ -1340,6 +1567,11 @@ impl Simulation {
             debt_created_this_tick: self.debt_created_this_tick,
             monetary_regime,
             wealth_shock: self.wealth_shock_this_tick,
+            adverse_events: self.risk_events.len() as u64,
+            open_risks: self.risk_events.iter().filter(|event| !event.countermeasure_applied).count() as u64,
+            countermeasures: self.risk_events.iter().filter(|event| event.countermeasure_applied).count() as u64,
+            systemic_risk: self.systemic_risk,
+            security_level: self.security_level,
         };
     }
 
@@ -1444,6 +1676,7 @@ impl Simulation {
             active_policy,
             next_policy,
             policy_mode: self.config.policy_mode.clone(),
+            risk_events: self.risk_events.clone(),
         }
     }
 
@@ -1548,5 +1781,21 @@ mod tests {
         assert_eq!(s.tick, 2);
         assert_eq!(s.last_policy_apply_tick, 2);
         assert_eq!(s.snapshot().active_policy.unwrap().name, "Trueque y unidad de cuenta");
+        assert!(s.risk_events[0].after_policy.is_some());
+    }
+
+    #[test]
+    fn detects_risk_and_measures_countermeasure() {
+        let mut config = config(42);
+        config.policy_mode = PolicyMode::Manual;
+        let mut s = Simulation::new(config);
+        s.step();
+        assert_eq!(s.risk_events.len(), 1);
+        assert_eq!(s.metrics.open_risks, 1);
+        let before = s.risk_events[0].before.systemic_risk;
+        assert!(s.apply_countermeasure());
+        assert_eq!(s.metrics.open_risks, 0);
+        assert_eq!(s.metrics.countermeasures, 1);
+        assert!(s.risk_events[0].after_countermeasure.as_ref().unwrap().systemic_risk < before);
     }
 }

@@ -52,6 +52,7 @@ async fn main() {
         .route("/api/runs/{id}/reset", post(reset_run))
         .route("/api/runs/{id}/policy", post(update_policy))
         .route("/api/runs/{id}/policy/next", post(apply_next_policy))
+        .route("/api/runs/{id}/risk/countermeasure", post(apply_countermeasure))
         .route("/api/runs/{id}/policy-mode", post(update_policy_mode))
         .route("/api/runs/{id}/snapshot", get(snapshot))
         .route("/api/runs/{id}/events", get(events))
@@ -185,6 +186,23 @@ async fn update_policy_mode(
         Some(r) => {
             r.sim.config.policy_mode = request.mode;
             Json(r.sim.snapshot()).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn apply_countermeasure(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let mut runs = state.runs.write().await;
+    match runs.get_mut(&id) {
+        Some(r) => {
+            if r.sim.apply_countermeasure() {
+                Json(r.sim.snapshot()).into_response()
+            } else {
+                StatusCode::CONFLICT.into_response()
+            }
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }
