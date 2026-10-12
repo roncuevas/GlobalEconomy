@@ -29,10 +29,30 @@ pub struct ScenarioConfig {
     pub wage: f64,
     #[serde(default = "default_initial_wealth")]
     pub initial_wealth: f64,
+    #[serde(default)]
+    pub evolution: bool,
+    #[serde(default = "default_shock_probability")]
+    pub shock_probability: f64,
+    #[serde(default = "default_shock_intensity")]
+    pub shock_intensity: f64,
+    #[serde(default = "default_strategy_mutation_rate")]
+    pub strategy_mutation_rate: f64,
 }
 
 fn default_initial_wealth() -> f64 {
     2_500.0
+}
+
+fn default_shock_probability() -> f64 {
+    0.02
+}
+
+fn default_shock_intensity() -> f64 {
+    0.18
+}
+
+fn default_strategy_mutation_rate() -> f64 {
+    0.02
 }
 
 fn default_company_count() -> usize {
@@ -73,6 +93,10 @@ impl Default for ScenarioConfig {
             food_price: 12.0,
             wage: 100.0,
             initial_wealth: default_initial_wealth(),
+            evolution: false,
+            shock_probability: default_shock_probability(),
+            shock_intensity: default_shock_intensity(),
+            strategy_mutation_rate: default_strategy_mutation_rate(),
         }
     }
 }
@@ -177,6 +201,32 @@ pub struct Person {
     pub need: f64,
     pub employed: bool,
     pub risk_score: f64,
+    #[serde(default)]
+    pub strategy: Strategy,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Strategy {
+    Saver,
+    Consumer,
+    Entrepreneur,
+}
+
+impl Default for Strategy {
+    fn default() -> Self {
+        Self::Consumer
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExternalShock {
+    pub id: u64,
+    pub tick: u64,
+    pub kind: String,
+    pub region: u16,
+    pub intensity: f64,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -330,6 +380,8 @@ pub struct Snapshot {
     pub transactions: Vec<Transaction>,
     #[serde(default)]
     pub compliance_alerts: Vec<ComplianceAlert>,
+    #[serde(default)]
+    pub external_shocks: Vec<ExternalShock>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -418,6 +470,7 @@ pub struct Simulation {
     next_transaction_id: u64,
     #[serde(default)]
     compliance_alerts: Vec<ComplianceAlert>,
+    external_shocks: Vec<ExternalShock>,
 }
 
 impl Simulation {
@@ -440,6 +493,11 @@ impl Simulation {
                 need: rng.random_range(0.4..1.0),
                 employed: rng.random_bool(0.82),
                 risk_score: 0.0,
+                strategy: match id % 3 {
+                    0 => Strategy::Saver,
+                    1 => Strategy::Consumer,
+                    _ => Strategy::Entrepreneur,
+                },
             });
         }
         let mut config = config;
@@ -541,6 +599,7 @@ impl Simulation {
             security_level: 0.25,
             next_transaction_id: 0,
             compliance_alerts: Vec::new(),
+            external_shocks: Vec::new(),
         };
         sim.recalculate_metrics();
         sim
@@ -2122,6 +2181,93 @@ impl Simulation {
         }
     }
 
+    fn apply_external_shock(&mut self, rng: &mut ChaCha8Rng) {
+        let probability = self
+            .config
+            .scenario_config
+            .shock_probability
+            .clamp(0.0, 1.0);
+        if !self.config.catastrophes || probability == 0.0 || !rng.random_bool(probability) {
+            return;
+        }
+        let region = rng.random_range(0..self.config.regions.max(1)) as u16;
+        let (kind, reason, direction) = match rng.random_range(0..4) {
+            0 => (
+                "shock_oferta",
+                "interrupción regional de producción y suministros",
+                -1.0,
+            ),
+            1 => (
+                "corrida_bancaria",
+                "pérdida repentina de confianza en intermediarios",
+                -1.0,
+            ),
+            2 => ("burbuja_activos", "revaluación rápida de activos", 1.0),
+            _ => (
+                "crisis_sanitaria",
+                "caída temporal de actividad y empleo",
+                -1.0,
+            ),
+        };
+        let intensity =
+            (self.config.scenario_config.shock_intensity * rng.random_range(0.7..1.3) * direction)
+                .clamp(-0.8, 0.8);
+        self.wealth_shock_this_tick = (self.wealth_shock_this_tick + intensity).clamp(-0.8, 0.8);
+        let shock = ExternalShock {
+            id: self.external_shocks.len() as u64,
+            tick: self.tick,
+            kind: kind.into(),
+            region,
+            intensity,
+            reason: reason.into(),
+        };
+        self.events.push(EconomicEvent {
+            tick: self.tick,
+            event_type: "external_shock".into(),
+            agent_id: self.government.id,
+            region,
+            amount: intensity.abs(),
+            reason: reason.into(),
+        });
+        self.external_shocks.push(shock);
+        if self.external_shocks.len() > 500 {
+            let excess = self.external_shocks.len() - 500;
+            self.external_shocks.drain(..excess);
+        }
+    }
+
+    fn evolve_strategies(&mut self, rng: &mut ChaCha8Rng) {
+        if !self.config.scenario_config.evolution {
+            return;
+        }
+        let mutation_rate = self
+            .config
+            .scenario_config
+            .strategy_mutation_rate
+            .clamp(0.0, 1.0);
+        for (index, person) in self.people.iter_mut().enumerate() {
+            let previous = self
+                .previous_wealth
+                .get(index)
+                .copied()
+                .unwrap_or(person.wealth);
+            if person.wealth < previous * 0.98 {
+                person.strategy = Strategy::Saver;
+            } else if person.income > self.config.scenario_config.wage * 0.7 && person.need < 0.5 {
+                person.strategy = Strategy::Entrepreneur;
+            } else if person.need > 0.78 {
+                person.strategy = Strategy::Consumer;
+            }
+            if rng.random_bool(mutation_rate) {
+                person.strategy = match rng.random_range(0..3) {
+                    0 => Strategy::Saver,
+                    1 => Strategy::Consumer,
+                    _ => Strategy::Entrepreneur,
+                };
+            }
+        }
+    }
+
     pub fn step(&mut self) -> Snapshot {
         if self.tick >= self.config.ticks {
             return self.snapshot();
@@ -2130,6 +2276,7 @@ impl Simulation {
         self.money_created_this_tick = 0.0;
         self.debt_created_this_tick = 0.0;
         self.wealth_shock_this_tick = 0.0;
+        self.events.clear();
         self.detect_upcoming_risk();
         self.begin_institution_tick();
         let mut scheduled_policy = self.pending_policy.take();
@@ -2158,6 +2305,7 @@ impl Simulation {
         }
         let seed = self.config.seed ^ self.tick.wrapping_mul(0x9E3779B97F4A7C15);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        self.apply_external_shock(&mut rng);
         let wage = self.config.scenario_config.wage;
         let policy_rate = self
             .config
@@ -2178,7 +2326,6 @@ impl Simulation {
             .map(|policy| policy.private_credit_creation)
             .unwrap_or(0.0)
             / self.people.len().max(1) as f64;
-        self.events.clear();
         for person in &mut self.people {
             person.income = if person.employed {
                 wage * (1.0 - policy_rate * 0.25)
@@ -2196,9 +2343,19 @@ impl Simulation {
                 person.money = (person.money * (1.0 + self.wealth_shock_this_tick)).max(0.0);
             }
             person.need = (person.need + 0.08).min(1.0);
-            if person.money >= price && person.need > 0.45 {
+            let purchase_need = match person.strategy {
+                Strategy::Saver => 0.58,
+                Strategy::Consumer => 0.35,
+                Strategy::Entrepreneur => 0.48,
+            };
+            if person.money >= price && person.need > purchase_need {
                 person.money -= price;
-                person.need = (person.need - 0.65).max(0.0);
+                let consumption = match person.strategy {
+                    Strategy::Saver => 0.55,
+                    Strategy::Consumer => 0.72,
+                    Strategy::Entrepreneur => 0.62,
+                };
+                person.need = (person.need - consumption).max(0.0);
                 self.events.push(EconomicEvent {
                     tick: self.tick,
                     event_type: "purchase".into(),
@@ -2220,6 +2377,7 @@ impl Simulation {
                 person.employed = !person.employed;
             }
         }
+        self.evolve_strategies(&mut rng);
         self.process_credit_cycle(price);
         self.settle_institution_tick();
         self.detect_compliance();
@@ -2489,6 +2647,13 @@ impl Simulation {
                 .take(100)
                 .cloned()
                 .collect(),
+            external_shocks: self
+                .external_shocks
+                .iter()
+                .rev()
+                .take(100)
+                .cloned()
+                .collect(),
         }
     }
 
@@ -2662,6 +2827,46 @@ mod tests {
             .risk_events
             .iter()
             .any(|event| event.policy_tick == 44));
+    }
+
+    #[test]
+    fn reproducible_external_shocks_and_strategy_evolution() {
+        let mut config = config(42);
+        config.catastrophes = true;
+        config.scenario_config.evolution = true;
+        config.scenario_config.shock_probability = 1.0;
+        config.scenario_config.shock_intensity = 0.2;
+        let mut a = Simulation::new(config.clone());
+        let mut b = Simulation::new(config);
+        let initial = a
+            .people
+            .iter()
+            .map(|person| person.strategy.clone())
+            .collect::<Vec<_>>();
+
+        a.step();
+        b.step();
+
+        assert!(!a.external_shocks.is_empty());
+        assert_eq!(
+            serde_json::to_string(&a.external_shocks).unwrap(),
+            serde_json::to_string(&b.external_shocks).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_string(&a.people).unwrap(),
+            serde_json::to_string(&b.people).unwrap()
+        );
+        assert_ne!(
+            initial,
+            a.people
+                .iter()
+                .map(|person| person.strategy.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(a
+            .events
+            .iter()
+            .any(|event| event.event_type == "external_shock"));
     }
 
     #[test]
