@@ -58,6 +58,9 @@ for (const run of [first, second, horizonRun]) {
   if (!run.run_id || run.status !== 'paused') throw new Error('run creation contract failed');
   const stepped = await request(`/api/runs/${run.run_id}/step`, { method: 'POST' });
   if (stepped.tick !== 1 || stepped.agents.length === 0) throw new Error('step contract failed');
+  for (const metric of ['bankruptcies', 'bank_concentration', 'regional_wealth_gap', 'social_mobility']) {
+    if (!(metric in stepped.metrics)) throw new Error(`snapshot metric missing: ${metric}`);
+  }
 }
 
 const policy = await request(`/api/runs/${first.run_id}/policy`, {
