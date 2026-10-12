@@ -507,6 +507,11 @@ async fn running_loop(state: AppState, id: Uuid) {
         if record.status != "running" {
             return;
         }
+        if record.sim.tick >= record.sim.config.ticks {
+            record.status = "paused".into();
+            persist_run(&state.storage_dir, id, record);
+            return;
+        }
         let snapshot = record.sim.step();
         record.history.push(snapshot.clone());
         if record.history.len() > HISTORY_LIMIT {
@@ -515,6 +520,11 @@ async fn running_loop(state: AppState, id: Uuid) {
         }
         persist_run(&state.storage_dir, id, record);
         append_snapshot(&state.storage_dir, id, &snapshot);
+        if record.sim.tick >= record.sim.config.ticks {
+            record.status = "paused".into();
+            persist_run(&state.storage_dir, id, record);
+            return;
+        }
     }
 }
 
