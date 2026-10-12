@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs,
+    io::Write,
     path::{Path as FsPath, PathBuf},
     sync::Arc,
 };
@@ -120,6 +121,34 @@ fn run_path(storage_dir: &FsPath, id: Uuid) -> PathBuf {
     storage_dir.join(format!("run-{id}.json"))
 }
 
+fn snapshot_log_path(storage_dir: &FsPath, id: Uuid) -> PathBuf {
+    storage_dir.join(format!("run-{id}.snapshots.jsonl"))
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistedRun {
+    sim: Simulation,
+    status: String,
+    created_at: DateTime<Utc>,
+}
+
+fn load_snapshot_history(storage_dir: &FsPath, id: Uuid) -> Vec<Snapshot> {
+    let path = snapshot_log_path(storage_dir, id);
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut history = Vec::new();
+    for line in contents.lines() {
+        if let Ok(snapshot) = serde_json::from_str::<Snapshot>(line) {
+            history.push(snapshot);
+            if history.len() > HISTORY_LIMIT {
+                history.remove(0);
+            }
+        }
+    }
+    history
+}
+
 fn load_runs(storage_dir: &FsPath) -> HashMap<Uuid, RunRecord> {
     if let Err(error) = fs::create_dir_all(storage_dir) {
         eprintln!("could not create local run storage at {storage_dir:?}: {error}");
@@ -148,9 +177,26 @@ fn load_runs(storage_dir: &FsPath) -> HashMap<Uuid, RunRecord> {
             eprintln!("could not read local run: {path:?}");
             continue;
         };
-        match serde_json::from_slice::<RunRecord>(&bytes) {
-            Ok(record) => {
-                runs.insert(id, record);
+        match serde_json::from_slice::<PersistedRun>(&bytes) {
+            Ok(persisted) => {
+                let mut history = load_snapshot_history(storage_dir, id);
+                if history.is_empty() {
+                    history = serde_json::from_slice::<RunRecord>(&bytes)
+                        .map(|legacy| legacy.history)
+                        .unwrap_or_default();
+                }
+                if history.is_empty() {
+                    history.push(persisted.sim.snapshot());
+                }
+                runs.insert(
+                    id,
+                    RunRecord {
+                        sim: persisted.sim,
+                        status: persisted.status,
+                        created_at: persisted.created_at,
+                        history,
+                    },
+                );
             }
             Err(error) => eprintln!("ignoring corrupt local run {path:?}: {error}"),
         }
@@ -165,7 +211,12 @@ fn persist_run(storage_dir: &FsPath, id: Uuid, record: &RunRecord) {
     }
     let path = run_path(storage_dir, id);
     let temporary = path.with_extension("json.tmp");
-    match serde_json::to_vec(record) {
+    let persisted = PersistedRun {
+        sim: record.sim.clone(),
+        status: record.status.clone(),
+        created_at: record.created_at,
+    };
+    match serde_json::to_vec(&persisted) {
         Ok(bytes) => {
             if let Err(error) =
                 fs::write(&temporary, bytes).and_then(|_| fs::rename(&temporary, &path))
@@ -176,6 +227,42 @@ fn persist_run(storage_dir: &FsPath, id: Uuid, record: &RunRecord) {
         }
         Err(error) => eprintln!("could not serialize local run {id}: {error}"),
     }
+}
+
+fn append_snapshot(storage_dir: &FsPath, id: Uuid, snapshot: &Snapshot) {
+    if let Err(error) = fs::create_dir_all(storage_dir) {
+        eprintln!("could not create snapshot storage at {storage_dir:?}: {error}");
+        return;
+    }
+    let path = snapshot_log_path(storage_dir, id);
+    let Ok(bytes) = serde_json::to_vec(snapshot) else {
+        eprintln!("could not serialize snapshot for run {id}");
+        return;
+    };
+    match fs::OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(mut file) => {
+            if let Err(error) = file.write_all(&bytes).and_then(|_| file.write_all(b"\n")) {
+                eprintln!("could not append snapshot {path:?}: {error}");
+            }
+        }
+        Err(error) => eprintln!("could not open snapshot log {path:?}: {error}"),
+    }
+}
+
+fn truncate_snapshot_log(storage_dir: &FsPath, id: Uuid) {
+    let path = snapshot_log_path(storage_dir, id);
+    if let Err(error) = fs::write(&path, []) {
+        eprintln!("could not reset snapshot log {path:?}: {error}");
+    }
+}
+
+fn load_snapshot_tick(storage_dir: &FsPath, id: Uuid, tick: u64) -> Option<Snapshot> {
+    let path = snapshot_log_path(storage_dir, id);
+    let contents = fs::read_to_string(path).ok()?;
+    contents
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Snapshot>(line).ok())
+        .find(|snapshot| snapshot.tick == tick)
 }
 
 async fn create_run(
@@ -199,6 +286,7 @@ async fn create_run(
         history: vec![initial_snapshot],
     };
     persist_run(&state.storage_dir, id, &record);
+    append_snapshot(&state.storage_dir, id, &record.history[0]);
     state.runs.write().await.insert(id, record);
     Json(response)
 }
@@ -302,6 +390,7 @@ async fn step_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl I
                 r.history.drain(..excess);
             }
             persist_run(&state.storage_dir, id, r);
+            append_snapshot(&state.storage_dir, id, &snapshot);
             Json(snapshot).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
@@ -315,7 +404,9 @@ async fn reset_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl 
             r.status = "paused".into();
             r.history.clear();
             r.history.push(r.sim.snapshot());
+            truncate_snapshot_log(&state.storage_dir, id);
             persist_run(&state.storage_dir, id, r);
+            append_snapshot(&state.storage_dir, id, &r.history[0]);
             Json(StatusResponse {
                 run_id: id,
                 status: r.status.clone(),
@@ -337,6 +428,11 @@ async fn update_policy(
             r.sim.apply_policy(policy);
             remember(r);
             persist_run(&state.storage_dir, id, r);
+            append_snapshot(
+                &state.storage_dir,
+                id,
+                r.history.last().expect("history is non-empty"),
+            );
             Json(r.sim.snapshot()).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
@@ -357,6 +453,11 @@ async fn apply_next_policy(
             if r.sim.apply_next_policy() {
                 remember(r);
                 persist_run(&state.storage_dir, id, r);
+                append_snapshot(
+                    &state.storage_dir,
+                    id,
+                    r.history.last().expect("history is non-empty"),
+                );
                 Json(r.sim.snapshot()).into_response()
             } else {
                 StatusCode::CONFLICT.into_response()
@@ -377,6 +478,11 @@ async fn update_policy_mode(
             r.sim.config.policy_mode = request.mode;
             remember(r);
             persist_run(&state.storage_dir, id, r);
+            append_snapshot(
+                &state.storage_dir,
+                id,
+                r.history.last().expect("history is non-empty"),
+            );
             Json(r.sim.snapshot()).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
@@ -393,6 +499,11 @@ async fn apply_countermeasure(
             if r.sim.apply_countermeasure() {
                 remember(r);
                 persist_run(&state.storage_dir, id, r);
+                append_snapshot(
+                    &state.storage_dir,
+                    id,
+                    r.history.last().expect("history is non-empty"),
+                );
                 Json(r.sim.snapshot()).into_response()
             } else {
                 StatusCode::CONFLICT.into_response()
@@ -421,7 +532,9 @@ async fn replay(
         .history
         .iter()
         .find(|snapshot| snapshot.tick == tick)
-        .map(|snapshot| Json(snapshot.clone()).into_response())
+        .cloned()
+        .or_else(|| load_snapshot_tick(&state.storage_dir, id, tick))
+        .map(|snapshot| Json(snapshot).into_response())
         .unwrap_or_else(|| StatusCode::GONE.into_response())
 }
 async fn snapshot(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
@@ -461,6 +574,11 @@ async fn stream_socket(mut socket: WebSocket, state: AppState, id: Uuid) {
                 r.sim.step();
                 remember(r);
                 persist_run(&state.storage_dir, id, r);
+                append_snapshot(
+                    &state.storage_dir,
+                    id,
+                    r.history.last().expect("history is non-empty"),
+                );
             }
             (r.status.clone(), r.sim.snapshot())
         };
@@ -498,5 +616,22 @@ mod tests {
         assert_eq!(restored.history.len(), 1);
         assert_eq!(restored.history[0].tick, 0);
         assert_eq!(restored.status, "paused");
+    }
+
+    #[test]
+    fn snapshot_log_supports_exact_tick_lookup() {
+        let directory = std::env::temp_dir().join(format!("globaleconomy-{}", Uuid::new_v4()));
+        let id = Uuid::new_v4();
+        let mut sim = Simulation::new(RunConfig::default());
+        let first = sim.snapshot();
+        let second = sim.step();
+
+        append_snapshot(&directory, id, &first);
+        append_snapshot(&directory, id, &second);
+
+        let loaded = load_snapshot_tick(&directory, id, 1).expect("tick should be indexed");
+        assert_eq!(loaded.tick, second.tick);
+        assert_eq!(load_snapshot_history(&directory, id).len(), 2);
+        fs::remove_dir_all(directory).expect("temporary persistence directory should be removable");
     }
 }
