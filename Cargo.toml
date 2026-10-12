@@ -30,6 +30,10 @@ name = "globaleconomy"
 path = "src/main.rs"
 required-features = ["server"]
 
+[[bin]]
+name = "scale-benchmark"
+path = "src/bin/scale-benchmark.rs"
+
 [profile.release]
 lto = true
 codegen-units = 1
