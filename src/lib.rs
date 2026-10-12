@@ -2,6 +2,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PolicyConfig {
@@ -1932,19 +1933,25 @@ impl Simulation {
     }
 
     fn detect_compliance(&mut self) {
-        let tick_transactions: Vec<Transaction> = self
+        let mut by_entity: HashMap<u32, Vec<&Transaction>> = HashMap::new();
+        for transaction in self
             .transactions
             .iter()
             .filter(|transaction| transaction.tick == self.tick)
-            .cloned()
-            .collect();
+        {
+            by_entity
+                .entry(transaction.from)
+                .or_default()
+                .push(transaction);
+            by_entity
+                .entry(transaction.to)
+                .or_default()
+                .push(transaction);
+        }
         let next_id = self.compliance_alerts.len() as u64;
         let mut alerts = Vec::new();
         for person in &self.people {
-            let related: Vec<&Transaction> = tick_transactions
-                .iter()
-                .filter(|transaction| transaction.from == person.id || transaction.to == person.id)
-                .collect();
+            let related = by_entity.get(&person.id).cloned().unwrap_or_default();
             let inflow: f64 = related
                 .iter()
                 .filter(|transaction| transaction.to == person.id)
@@ -1992,12 +1999,7 @@ impl Simulation {
             }
         }
         for company in &self.companies {
-            let related: Vec<&Transaction> = tick_transactions
-                .iter()
-                .filter(|transaction| {
-                    transaction.from == company.id || transaction.to == company.id
-                })
-                .collect();
+            let related = by_entity.get(&company.id).cloned().unwrap_or_default();
             let sales: f64 = related
                 .iter()
                 .filter(|transaction| {
