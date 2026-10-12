@@ -33,3 +33,27 @@ impl WasmSimulation {
         self.simulation.tick
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::WasmSimulation;
+    use globaleconomy::RunConfig;
+
+    #[test]
+    fn json_adapter_creates_and_advances_small_run() {
+        let mut config = RunConfig::default();
+        config.agent_count = 16;
+        config.ticks = 2;
+        let config_json = serde_json::to_string(&config).expect("default config is serializable");
+        let mut simulation = WasmSimulation::new(&config_json).expect("config should be accepted");
+
+        assert_eq!(simulation.tick(), 0);
+        let snapshot = simulation.step_json().expect("step should serialize");
+        assert!(snapshot.contains("\"tick\":1"));
+        assert_eq!(simulation.tick(), 1);
+        assert!(simulation
+            .snapshot_json()
+            .expect("snapshot should serialize")
+            .contains("\"agents\""));
+    }
+}
