@@ -3094,6 +3094,36 @@ mod tests {
     }
 
     #[test]
+    fn fiscal_policy_changes_measurable_outcomes_without_changing_seeded_agents() {
+        let mut baseline = Simulation::new(config(42));
+        let mut redistributive = Simulation::new(config(42));
+        redistributive.apply_policy(PolicyConfig {
+            income_tax_rate: 0.45,
+            transfer_per_person: 120.0,
+            base_interest_rate: 0.04,
+            liquidity_injection: 0.0,
+        });
+
+        baseline.step();
+        redistributive.step();
+
+        assert_eq!(baseline.people.len(), redistributive.people.len());
+        assert_eq!(baseline.metrics.gdp, redistributive.metrics.gdp);
+        assert!(redistributive.metrics.tax_revenue > baseline.metrics.tax_revenue);
+        let baseline_wealth: f64 = baseline.people.iter().map(|person| person.wealth).sum();
+        let redistributive_wealth: f64 = redistributive
+            .people
+            .iter()
+            .map(|person| person.wealth)
+            .sum();
+        assert_ne!(baseline_wealth, redistributive_wealth);
+        assert!(redistributive
+            .transactions
+            .iter()
+            .any(|transaction| transaction.kind == "transfer"));
+    }
+
+    #[test]
     fn step_after_horizon_returns_the_same_snapshot() {
         let mut config = config(42);
         config.ticks = 1;
