@@ -113,6 +113,22 @@ paths:
         required: true
         content: { application/json: { schema: { type: object, required: [mode], properties: { mode: { type: string, enum: [manual, automatic] } } } } }
       responses: { '200': { description: Updated snapshot } }
+  /api/runs/{id}/shock:
+    post:
+      summary: Inject a reproducible synthetic external shock
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, region, intensity]
+              properties:
+                kind: { type: string, enum: [shock_oferta, corrida_bancaria, burbuja_activos, crisis_sanitaria] }
+                region: { type: integer, minimum: 0 }
+                intensity: { type: number, minimum: 0, maximum: 0.8 }
+      responses: { '200': { description: Updated snapshot }, '404': { description: Run not found }, '422': { description: Unsupported shock kind } }
   /api/runs/{id}/risk/countermeasure:
     post:
       summary: Apply the latest monetary risk countermeasure
