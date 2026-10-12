@@ -371,7 +371,7 @@ pub struct EconomicEvent {
     pub reason: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Simulation {
     pub config: RunConfig,
     pub people: Vec<Person>,
