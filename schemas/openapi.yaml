@@ -34,6 +34,7 @@ components:
         agent_count: { type: integer, minimum: 1 }
         regions: { type: integer, minimum: 1 }
         ticks: { type: integer, minimum: 1 }
+        monetary_history: { type: array, items: { $ref: '#/components/schemas/MonetaryPolicy' } }
     Snapshot:
       type: object
       properties:
@@ -45,6 +46,15 @@ components:
       properties:
         income_tax_rate: { type: number }
         transfer_per_person: { type: number }
+        base_interest_rate: { type: number }
+        liquidity_injection: { type: number }
+    MonetaryPolicy:
+      type: object
+      required: [apply_tick, name, description, base_interest_rate, liquidity_injection]
+      properties:
+        apply_tick: { type: integer }
+        name: { type: string }
+        description: { type: string }
         base_interest_rate: { type: number }
         liquidity_injection: { type: number }
 

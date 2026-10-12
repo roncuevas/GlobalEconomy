@@ -27,5 +27,7 @@ El endpoint de creación acepta `seed`, `model_version`, `agent_count`, `regions
 
 ## Diseño del MVP
 
-El motor está aislado de Axum en `src/lib.rs`. La primera versión implementa personas, empleo, salarios, necesidades, compras, impuestos, transferencias, métricas de riqueza/Gini, oferta monetaria, tasa de interés, inyección de liquidez y riesgo explicable básico. El snapshot visual incluye nodos de personas, mercados regionales y aristas de comercio/mercado. Empresas, bancos, quiebras, AML/fiscal avanzado, Parquet/DuckDB y WASM quedan como extensiones posteriores del plan.
+El motor está aislado de Axum en `src/lib.rs`. La corrida evolutiva comienza con el mismo patrimonio para todos y genera desigualdad únicamente después de que avanzan los ticks. `monetary_history` registra la génesis, expansiones y contracciones monetarias; el snapshot expone el banco central, los mercados regionales, los eventos de emisión y la riqueza por nodo.
+
+La red no se renderiza como cientos de elementos SVG/React. React conserva los controles y las métricas; PixiJS v8 dibuja nodos y conexiones en un canvas WebGL, dejando preparado el camino para 10,000+ agentes. PixiJS documenta WebGL/WebGL2 como renderer estable recomendado para producción y WebGPU como opción más nueva. Empresas, bancos comerciales, quiebras, AML/fiscal avanzado, Parquet/DuckDB y WASM quedan como extensiones posteriores del plan.
 
