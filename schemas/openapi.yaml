@@ -118,19 +118,34 @@ paths:
       summary: Apply the latest monetary risk countermeasure
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses: { '200': { description: Updated snapshot }, '409': { description: No open risk } }
-  /api/runs/{id}/transactions:
-    get:
-      summary: Get institutional transactions from the latest tick
-      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
-      responses:
-        '200':
-          description: Transactions
-          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Transaction' } } } }
   /api/runs/{id}/events:
     get:
-      summary: Get economic events from the latest tick
-      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      summary: Get filtered economic events
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: tick, in: query, schema: { type: integer, format: int64 } }
+        - { name: type, in: query, schema: { type: string } }
+        - { name: agent, in: query, schema: { type: integer, format: int64 } }
+        - { name: region, in: query, schema: { type: integer } }
+        - { name: risk, in: query, schema: { type: boolean } }
+        - { name: min_amount, in: query, schema: { type: number } }
+        - { name: max_amount, in: query, schema: { type: number } }
       responses: { '200': { description: Economic events } }
+  /api/runs/{id}/transactions:
+    get:
+      summary: Get filtered institutional transactions
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: tick, in: query, schema: { type: integer, format: int64 } }
+        - { name: kind, in: query, schema: { type: string } }
+        - { name: agent, in: query, schema: { type: integer, format: int64 } }
+        - { name: region, in: query, schema: { type: integer } }
+        - { name: min_amount, in: query, schema: { type: number } }
+        - { name: max_amount, in: query, schema: { type: number } }
+      responses:
+        '200':
+          description: Filtered transactions
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Transaction' } } } }
   /api/runs/{id}/stream:
     get:
       summary: Stream live snapshots, metrics, transactions and alerts over WebSocket

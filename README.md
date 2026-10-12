@@ -29,8 +29,7 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 - `GET /api/runs/{id}/metrics` devuelve solo la serie compacta de métricas persistidas, sin agentes ni conexiones.
 - `GET /api/runs/{id}/metrics.parquet` descarga esa serie en Parquet columnar para DuckDB, Python o notebooks.
 - `GET /api/runs/{id}/replay/{tick}` recupera un snapshot histórico exacto; devuelve `410` si ya salió de la ventana local.
-- `GET /api/runs/{id}/events` devuelve eventos del último tick.
-- `GET /api/runs/{id}/transactions` devuelve las transferencias institucionales del último tick.
+- `GET /api/runs/{id}/events` y `/transactions` aceptan filtros por tick, tipo/operación, entidad, región, riesgo y rango monetario.
 - `POST /api/runs/{id}/compliance/{alert_id}/resolve` marca una alerta AML/fiscal como revisada y conserva el cambio en el replay.
 - `GET /api/runs/{id}/stream` emite por WebSocket mensajes `snapshot`, `metric_update`, `transaction`, `alert` y `run_status`.
 
