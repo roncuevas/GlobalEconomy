@@ -2113,6 +2113,7 @@ impl Simulation {
             self.people[index].money -= amount;
             self.people[index].debt = (self.people[index].debt - amount).max(0.0);
             self.private_debt = (self.private_debt - amount).max(0.0);
+            self.banks[bank_index].loans = (self.banks[bank_index].loans - amount).max(0.0);
             self.record_transaction(
                 self.people[index].id,
                 self.banks[bank_index].id,
@@ -2135,6 +2136,8 @@ impl Simulation {
             self.companies[index].cash -= amount;
             self.companies[index].debt = (self.companies[index].debt - amount).max(0.0);
             self.private_debt = (self.private_debt - amount).max(0.0);
+            let bank_index = index % self.banks.len();
+            self.banks[bank_index].loans = (self.banks[bank_index].loans - amount).max(0.0);
             self.record_transaction(
                 company_id,
                 self.banks[index % self.banks.len()].id,
@@ -2156,6 +2159,8 @@ impl Simulation {
                 self.companies[index].inventory = 0.0;
                 self.companies[index].debt = 0.0;
                 self.private_debt = (self.private_debt - loss).max(0.0);
+                let bank_index = index % self.banks.len();
+                self.banks[bank_index].loans = (self.banks[bank_index].loans - loss).max(0.0);
                 self.events.push(EconomicEvent {
                     tick: self.tick,
                     event_type: "bankruptcy".into(),
@@ -2960,6 +2965,31 @@ mod tests {
             .compliance_alerts
             .iter()
             .any(|alert| alert.category == "aml" && alert.entity_id == 0));
+    }
+
+    #[test]
+    fn bank_exposure_reconciles_repayments_and_company_default() {
+        let mut s = Simulation::new(config(42));
+        s.people[0].debt = 100.0;
+        s.people[0].money = 1_000.0;
+        s.people[0].need = 0.0;
+        s.banks[0].loans = 100.0;
+
+        s.process_credit_cycle(12.0);
+
+        assert!(s.people[0].debt < 100.0);
+        assert!(s.banks[0].loans < 100.0);
+
+        let company = &mut s.companies[0];
+        company.cash = 0.0;
+        company.debt = 1_000.0;
+        s.banks[0].loans += 1_000.0;
+
+        s.process_credit_cycle(12.0);
+
+        assert!(!s.companies[0].active);
+        assert!(s.banks[0].loans < 1_000.0);
+        assert!(s.banks.iter().all(|bank| bank.loans >= 0.0));
     }
 
     #[test]
