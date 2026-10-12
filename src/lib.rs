@@ -46,6 +46,19 @@ impl Default for ScenarioConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyMode {
+    Manual,
+    Automatic,
+}
+
+impl Default for PolicyMode {
+    fn default() -> Self {
+        Self::Automatic
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunConfig {
     pub seed: u64,
     pub model_version: String,
@@ -62,6 +75,8 @@ pub struct RunConfig {
     pub historical_mode: bool,
     #[serde(default)]
     pub catastrophes: bool,
+    #[serde(default)]
+    pub policy_mode: PolicyMode,
 }
 
 fn default_true() -> bool {
@@ -110,6 +125,7 @@ impl Default for RunConfig {
             monetary_history: Vec::new(),
             historical_mode: true,
             catastrophes: false,
+            policy_mode: PolicyMode::Automatic,
         }
     }
 }
@@ -181,6 +197,9 @@ pub struct Snapshot {
     pub policy: PolicyConfig,
     pub monetary_history: Vec<MonetaryPolicy>,
     pub money_events: Vec<MoneyEvent>,
+    pub active_policy: Option<MonetaryPolicy>,
+    pub next_policy: Option<MonetaryPolicy>,
+    pub policy_mode: PolicyMode,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -207,6 +226,8 @@ pub struct Simulation {
     private_debt: f64,
     debt_created_this_tick: f64,
     wealth_shock_this_tick: f64,
+    last_policy_apply_tick: u64,
+    pending_policy: Option<MonetaryPolicy>,
 }
 
 impl Simulation {
@@ -260,6 +281,8 @@ impl Simulation {
             private_debt: 0.0,
             debt_created_this_tick: 0.0,
             wealth_shock_this_tick: 0.0,
+            last_policy_apply_tick: 0,
+            pending_policy: None,
         };
         sim.recalculate_metrics();
         sim
@@ -1133,6 +1156,47 @@ impl Simulation {
         history
     }
 
+    fn apply_policy_event(&mut self, policy: &MonetaryPolicy) {
+        self.config.policy_config.base_interest_rate = policy.base_interest_rate;
+        self.config.policy_config.liquidity_injection = policy.liquidity_injection;
+        self.government_debt = (self.government_debt + policy.government_debt_change).max(0.0);
+        self.private_debt = (self.private_debt + policy.private_credit_creation).max(0.0);
+        self.debt_created_this_tick = policy.government_debt_change + policy.private_credit_creation;
+        self.wealth_shock_this_tick = policy.wealth_shock;
+        self.money_created_this_tick = policy.liquidity_injection + policy.private_credit_creation;
+        self.money_created_total += self.money_created_this_tick;
+        if self.money_created_this_tick != 0.0 {
+            self.money_events.push(MoneyEvent {
+                tick: self.tick,
+                kind: if self.money_created_this_tick > 0.0 {
+                    "money_creation".into()
+                } else {
+                    "money_destruction".into()
+                },
+                amount: self.money_created_this_tick,
+                reason: policy.description.clone(),
+            });
+        }
+        self.last_policy_apply_tick = policy.apply_tick;
+    }
+
+    pub fn apply_next_policy(&mut self) -> bool {
+        let next = self
+            .config
+            .monetary_history
+            .iter()
+            .find(|policy| {
+                policy.apply_tick > self.last_policy_apply_tick
+                    && (!policy.optional || self.config.catastrophes)
+            })
+            .cloned();
+        let Some(policy) = next else { return false; };
+        self.apply_policy_event(&policy);
+        self.pending_policy = Some(policy);
+        self.recalculate_metrics();
+        true
+    }
+
     pub fn step(&mut self) -> Snapshot {
         if self.tick >= self.config.ticks {
             return self.snapshot();
@@ -1141,36 +1205,26 @@ impl Simulation {
         self.money_created_this_tick = 0.0;
         self.debt_created_this_tick = 0.0;
         self.wealth_shock_this_tick = 0.0;
-        let scheduled_policy = self
-            .config
-            .monetary_history
-            .iter()
-            .find(|policy| {
-                policy.apply_tick == self.tick && (!policy.optional || self.config.catastrophes)
-            })
-            .cloned();
-        if let Some(policy) = scheduled_policy.clone() {
-            self.config.policy_config.base_interest_rate = policy.base_interest_rate;
-            self.config.policy_config.liquidity_injection = policy.liquidity_injection;
-            self.government_debt = (self.government_debt + policy.government_debt_change).max(0.0);
-            self.private_debt = (self.private_debt + policy.private_credit_creation).max(0.0);
-            self.debt_created_this_tick =
-                policy.government_debt_change + policy.private_credit_creation;
+        let mut scheduled_policy = self.pending_policy.take();
+        if let Some(policy) = scheduled_policy.as_ref() {
+            self.debt_created_this_tick = policy.government_debt_change + policy.private_credit_creation;
+            self.money_created_this_tick = policy.liquidity_injection + policy.private_credit_creation;
             self.wealth_shock_this_tick = policy.wealth_shock;
-            self.money_created_this_tick =
-                policy.liquidity_injection + policy.private_credit_creation;
-            self.money_created_total += self.money_created_this_tick;
-            if self.money_created_this_tick != 0.0 {
-                self.money_events.push(MoneyEvent {
-                    tick: self.tick,
-                    kind: if self.money_created_this_tick > 0.0 {
-                        "money_creation".into()
-                    } else {
-                        "money_destruction".into()
-                    },
-                    amount: self.money_created_this_tick,
-                    reason: policy.description,
-                });
+        }
+        if scheduled_policy.is_none() && matches!(self.config.policy_mode, PolicyMode::Automatic) {
+            let next = self
+                .config
+                .monetary_history
+                .iter()
+                .find(|policy| {
+                    policy.apply_tick == self.tick
+                        && policy.apply_tick > self.last_policy_apply_tick
+                        && (!policy.optional || self.config.catastrophes)
+                })
+                .cloned();
+            if let Some(policy) = next {
+                self.apply_policy_event(&policy);
+                scheduled_policy = Some(policy);
             }
         }
         let seed = self.config.seed ^ self.tick.wrapping_mul(0x9E3779B97F4A7C15);
@@ -1264,10 +1318,7 @@ impl Simulation {
             .config
             .monetary_history
             .iter()
-            .filter(|policy| {
-                policy.apply_tick <= self.tick && (!policy.optional || self.config.catastrophes)
-            })
-            .last()
+            .find(|policy| policy.apply_tick == self.last_policy_apply_tick)
             .map(|policy| policy.era.clone())
             .unwrap_or_else(|| "commodity".into());
         self.metrics = Metrics {
@@ -1367,6 +1418,21 @@ impl Simulation {
                 });
             }
         }
+        let active_policy = self
+            .config
+            .monetary_history
+            .iter()
+            .find(|policy| policy.apply_tick == self.last_policy_apply_tick)
+            .cloned();
+        let next_policy = self
+            .config
+            .monetary_history
+            .iter()
+            .find(|policy| {
+                policy.apply_tick > self.last_policy_apply_tick
+                    && (!policy.optional || self.config.catastrophes)
+            })
+            .cloned();
         Snapshot {
             tick: self.tick,
             agents,
@@ -1375,6 +1441,9 @@ impl Simulation {
             policy: self.config.policy_config.clone(),
             monetary_history: self.config.monetary_history.clone(),
             money_events: self.money_events.clone(),
+            active_policy,
+            next_policy,
+            policy_mode: self.config.policy_mode.clone(),
         }
     }
 
@@ -1462,5 +1531,22 @@ mod tests {
             .iter()
             .any(|event| event.kind == "money_creation"));
         assert!(s.metrics.cumulative_money_created > s.people.len() as f64 * 2_500.0);
+    }
+
+    #[test]
+    fn manual_mode_evolves_until_next_policy_is_requested() {
+        let mut config = config(42);
+        config.ticks = 10;
+        config.policy_mode = PolicyMode::Manual;
+        let mut s = Simulation::new(config);
+        s.step();
+        s.step();
+        assert_eq!(s.tick, 2);
+        assert_eq!(s.last_policy_apply_tick, 0);
+        assert_eq!(s.metrics.debt_created_this_tick, 0.0);
+        assert!(s.apply_next_policy());
+        assert_eq!(s.tick, 2);
+        assert_eq!(s.last_policy_apply_tick, 2);
+        assert_eq!(s.snapshot().active_policy.unwrap().name, "Trueque y unidad de cuenta");
     }
 }

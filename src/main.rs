@@ -7,8 +7,8 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Utc};
-use globaleconomy::{PolicyConfig, RunConfig, Simulation, Snapshot};
-use serde::Serialize;
+use globaleconomy::{PolicyConfig, PolicyMode, RunConfig, Simulation, Snapshot};
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -51,6 +51,8 @@ async fn main() {
         .route("/api/runs/{id}/step", post(step_run))
         .route("/api/runs/{id}/reset", post(reset_run))
         .route("/api/runs/{id}/policy", post(update_policy))
+        .route("/api/runs/{id}/policy/next", post(apply_next_policy))
+        .route("/api/runs/{id}/policy-mode", post(update_policy_mode))
         .route("/api/runs/{id}/snapshot", get(snapshot))
         .route("/api/runs/{id}/events", get(events))
         .route("/api/runs/{id}/stream", get(stream))
@@ -149,6 +151,39 @@ async fn update_policy(
     match runs.get_mut(&id) {
         Some(r) => {
             r.sim.apply_policy(policy);
+            Json(r.sim.snapshot()).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+#[derive(Deserialize)]
+struct PolicyModeRequest {
+    mode: PolicyMode,
+}
+
+async fn apply_next_policy(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+    let mut runs = state.runs.write().await;
+    match runs.get_mut(&id) {
+        Some(r) => {
+            if r.sim.apply_next_policy() {
+                Json(r.sim.snapshot()).into_response()
+            } else {
+                StatusCode::CONFLICT.into_response()
+            }
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn update_policy_mode(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(request): Json<PolicyModeRequest>,
+) -> impl IntoResponse {
+    let mut runs = state.runs.write().await;
+    match runs.get_mut(&id) {
+        Some(r) => {
+            r.sim.config.policy_mode = request.mode;
             Json(r.sim.snapshot()).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
