@@ -26,6 +26,7 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 - `POST /api/runs/{id}/risk/countermeasure` aplica la contramedida del riesgo abierto más reciente.
 - `GET /api/runs/{id}/snapshot` devuelve el estado visual reducido.
 - `GET /api/runs/{id}/history` devuelve el historial local acotado de snapshots.
+- `GET /api/runs/{id}/metrics` devuelve solo la serie compacta de métricas persistidas, sin agentes ni conexiones.
 - `GET /api/runs/{id}/replay/{tick}` recupera un snapshot histórico exacto; devuelve `410` si ya salió de la ventana local.
 - `GET /api/runs/{id}/events` devuelve eventos del último tick.
 - `GET /api/runs/{id}/transactions` devuelve las transferencias institucionales del último tick.

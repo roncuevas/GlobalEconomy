@@ -57,6 +57,14 @@ paths:
       summary: Get bounded local snapshot history
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses: { '200': { description: Snapshot history } }
+  /api/runs/{id}/metrics:
+    get:
+      summary: Get compact persisted metric history
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Metric points without visual agents
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MetricPoint' } } } }
   /api/runs/{id}/replay/{tick}:
     get:
       summary: Get an exact historical snapshot
@@ -160,6 +168,16 @@ components:
         metrics: { type: object }
         compliance_alerts: { type: array, items: { $ref: '#/components/schemas/ComplianceAlert' } }
         external_shocks: { type: array, items: { $ref: '#/components/schemas/ExternalShock' } }
+    MetricPoint:
+      type: object
+      required: [tick, metrics]
+      properties:
+        tick: { type: integer, format: int64 }
+        metrics: { $ref: '#/components/schemas/Metrics' }
+    Metrics:
+      type: object
+      description: Compact aggregate indicators for a tick.
+      additionalProperties: { type: number }
     PolicyConfig:
       type: object
       properties:
