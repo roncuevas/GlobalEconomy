@@ -336,6 +336,14 @@ pub struct Metrics {
     pub aml_alerts: u64,
     #[serde(default)]
     pub tax_alerts: u64,
+    #[serde(default)]
+    pub bankruptcies: u64,
+    #[serde(default)]
+    pub bank_concentration: f64,
+    #[serde(default)]
+    pub regional_wealth_gap: f64,
+    #[serde(default)]
+    pub social_mobility: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2509,6 +2517,75 @@ impl Simulation {
         };
         let top_count = (self.people.len() / 10).max(1);
         let top_wealth: f64 = sorted.iter().rev().take(top_count).sum();
+        let mut regional_totals = vec![(0.0, 0_u64); self.config.regions.max(1)];
+        for person in &self.people {
+            let region = person.region as usize;
+            if let Some((regional_total, regional_count)) = regional_totals.get_mut(region) {
+                *regional_total += person.wealth;
+                *regional_count += 1;
+            }
+        }
+        let regional_means: Vec<f64> = regional_totals
+            .iter()
+            .filter_map(|(regional_total, regional_count)| {
+                (*regional_count > 0).then_some(*regional_total / *regional_count as f64)
+            })
+            .collect();
+        let regional_wealth_gap = regional_means
+            .iter()
+            .copied()
+            .reduce(f64::max)
+            .zip(regional_means.iter().copied().reduce(f64::min))
+            .map(|(maximum, minimum)| ((maximum - minimum) / total.max(1.0)).clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let bank_loans: f64 = self.banks.iter().map(|bank| bank.loans).sum();
+        let bank_concentration = self
+            .banks
+            .iter()
+            .map(|bank| bank.loans)
+            .reduce(f64::max)
+            .map(|largest| {
+                if bank_loans > 0.0 {
+                    largest / bank_loans
+                } else {
+                    0.0
+                }
+            })
+            .unwrap_or(0.0);
+        let bankruptcies = self
+            .companies
+            .iter()
+            .filter(|company| !company.active)
+            .count() as u64;
+        let social_mobility =
+            if self.previous_wealth.len() == self.people.len() && !self.people.is_empty() {
+                let mut previous_order: Vec<usize> = (0..self.people.len()).collect();
+                previous_order.sort_by(|left, right| {
+                    self.previous_wealth[*left].total_cmp(&self.previous_wealth[*right])
+                });
+                let mut current_order: Vec<usize> = (0..self.people.len()).collect();
+                current_order.sort_by(|left, right| {
+                    self.people[*left]
+                        .wealth
+                        .total_cmp(&self.people[*right].wealth)
+                });
+                let mut previous_deciles = vec![0_u8; self.people.len()];
+                let mut current_deciles = vec![0_u8; self.people.len()];
+                for (rank, index) in previous_order.into_iter().enumerate() {
+                    previous_deciles[index] = ((rank * 10) / self.people.len()) as u8;
+                }
+                for (rank, index) in current_order.into_iter().enumerate() {
+                    current_deciles[index] = ((rank * 10) / self.people.len()) as u8;
+                }
+                previous_deciles
+                    .iter()
+                    .zip(current_deciles.iter())
+                    .filter(|(previous, current)| previous != current)
+                    .count() as f64
+                    / self.people.len() as f64
+            } else {
+                0.0
+            };
         let monetary_regime = self
             .config
             .monetary_history
@@ -2563,6 +2640,10 @@ impl Simulation {
                 .iter()
                 .filter(|alert| alert.category == "tax_evasion" && alert.status == "open")
                 .count() as u64,
+            bankruptcies,
+            bank_concentration,
+            regional_wealth_gap,
+            social_mobility,
         };
     }
 
@@ -2884,6 +2965,23 @@ mod tests {
         let mut s = Simulation::new(config(42));
         s.step();
         assert!((0.0..=1.0).contains(&s.metrics.gini));
+    }
+
+    #[test]
+    fn extended_distribution_metrics_are_bounded_and_exposed() {
+        let mut config = config(42);
+        config.agent_count = 32;
+        config.regions = 4;
+        let mut s = Simulation::new(config);
+        s.step();
+
+        assert!((0.0..=1.0).contains(&s.metrics.bank_concentration));
+        assert!((0.0..=1.0).contains(&s.metrics.regional_wealth_gap));
+        assert!((0.0..=1.0).contains(&s.metrics.social_mobility));
+        assert_eq!(s.metrics.bankruptcies, 0);
+        let encoded = serde_json::to_string(&s.metrics).unwrap();
+        assert!(encoded.contains("bank_concentration"));
+        assert!(encoded.contains("regional_wealth_gap"));
     }
     #[test]
     fn no_negative_money() {
