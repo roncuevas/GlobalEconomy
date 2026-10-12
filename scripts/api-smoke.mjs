@@ -96,6 +96,30 @@ const parquet = await request(`/api/runs/${first.run_id}/metrics.parquet`);
 const magic = new TextDecoder().decode(new Uint8Array(parquet).slice(0, 4));
 if (magic !== 'PAR1') throw new Error('Parquet export failed');
 
+await request(`/api/runs/${first.run_id}/start`, { method: 'POST' });
+const streamTypes = await new Promise((resolve, reject) => {
+  const types = new Set();
+  const socket = new WebSocket(`${baseUrl.replace(/^http/, 'ws')}/api/runs/${first.run_id}/stream`);
+  const timeout = setTimeout(() => {
+    socket.close();
+    reject(new Error(`WebSocket messages incomplete: ${[...types].join(',')}`));
+  }, 5_000);
+  socket.addEventListener('message', (event) => {
+    const message = JSON.parse(event.data);
+    types.add(message.type);
+    if (['snapshot', 'metric_update', 'transaction', 'alert', 'run_status'].every((type) => types.has(type))) {
+      clearTimeout(timeout);
+      socket.close();
+      resolve([...types].sort());
+    }
+  });
+  socket.addEventListener('error', () => {
+    clearTimeout(timeout);
+    reject(new Error('WebSocket connection failed'));
+  });
+});
+await request(`/api/runs/${first.run_id}/pause`, { method: 'POST' });
+
 console.log(JSON.stringify({
   ok: true,
   runs: [first.run_id, second.run_id],
@@ -104,4 +128,5 @@ console.log(JSON.stringify({
   filtered_transactions: transactions.length,
   metric_points: metrics.length,
   parquet_magic: magic,
+  websocket_types: streamTypes,
 }));
