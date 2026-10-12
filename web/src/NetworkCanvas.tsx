@@ -28,7 +28,7 @@ export function NetworkCanvas({snapshot,onSelect}:{snapshot:Snapshot|null;onSele
       redraw(snapshotRef.current);
     };
     const onWheel=(event:WheelEvent)=>{event.preventDefault();zoomBy(event.deltaY<0?1.14:.88);};
-    const onPointerDown=(event:PointerEvent)=>{dragging=true;movedRef.current=false;lastX=event.clientX;lastY=event.clientY;host.setPointerCapture?.(event.pointerId);};
+    const onPointerDown=(event:PointerEvent)=>{if((event.target as HTMLElement).closest('button'))return;dragging=true;movedRef.current=false;lastX=event.clientX;lastY=event.clientY;host.setPointerCapture?.(event.pointerId);};
     const onPointerMove=(event:PointerEvent)=>{if(!dragging)return;const scene=sceneRef.current;if(!scene)return;const dx=event.clientX-lastX,dy=event.clientY-lastY;if(Math.abs(dx)+Math.abs(dy)>2)movedRef.current=true;scene.world.position.x+=dx;scene.world.position.y+=dy;lastX=event.clientX;lastY=event.clientY;};
     const onPointerUp=(event:PointerEvent)=>{dragging=false;host.releasePointerCapture?.(event.pointerId);};
     host.addEventListener('wheel',onWheel,{passive:false});host.addEventListener('pointerdown',onPointerDown);host.addEventListener('pointermove',onPointerMove);host.addEventListener('pointerup',onPointerUp);host.addEventListener('pointercancel',onPointerUp);
