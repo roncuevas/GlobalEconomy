@@ -15,6 +15,14 @@ paths:
       summary: Get visual snapshot
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses: { '200': { description: Snapshot } }
+  /api/runs/{id}/policy:
+    post:
+      summary: Apply monetary policy immediately
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PolicyConfig' } } }
+      responses: { '200': { description: Updated snapshot } }
 components:
   schemas:
     RunConfig:
@@ -32,4 +40,11 @@ components:
         tick: { type: integer }
         agents: { type: array, items: { type: object } }
         metrics: { type: object }
+    PolicyConfig:
+      type: object
+      properties:
+        income_tax_rate: { type: number }
+        transfer_per_person: { type: number }
+        base_interest_rate: { type: number }
+        liquidity_injection: { type: number }
 

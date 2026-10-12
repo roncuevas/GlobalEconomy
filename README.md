@@ -18,6 +18,7 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 - `POST /api/runs` crea una corrida.
 - `POST /api/runs/{id}/step` avanza exactamente un tick.
 - `POST /api/runs/{id}/start` y `/pause` controlan el estado.
+- `POST /api/runs/{id}/policy` aplica una política monetaria en tiempo real.
 - `GET /api/runs/{id}/snapshot` devuelve el estado visual reducido.
 - `GET /api/runs/{id}/events` devuelve eventos del último tick.
 - `GET /api/runs/{id}/stream` emite snapshots por WebSocket.
@@ -26,5 +27,5 @@ El endpoint de creación acepta `seed`, `model_version`, `agent_count`, `regions
 
 ## Diseño del MVP
 
-El motor está aislado de Axum en `src/lib.rs`. La primera versión implementa personas, empleo, salarios, necesidades, compras, impuestos, transferencias, métricas de riqueza/Gini y riesgo explicable básico. Empresas, bancos, quiebras, AML/fiscal avanzado, Parquet/DuckDB y WASM quedan como extensiones posteriores del plan.
+El motor está aislado de Axum en `src/lib.rs`. La primera versión implementa personas, empleo, salarios, necesidades, compras, impuestos, transferencias, métricas de riqueza/Gini, oferta monetaria, tasa de interés, inyección de liquidez y riesgo explicable básico. El snapshot visual incluye nodos de personas, mercados regionales y aristas de comercio/mercado. Empresas, bancos, quiebras, AML/fiscal avanzado, Parquet/DuckDB y WASM quedan como extensiones posteriores del plan.
 
