@@ -6,7 +6,7 @@ fn main() {
     println!("GlobalEconomy engine scale benchmark (one deterministic tick)");
     println!("agents,init_ms,step_ms,visual_agents,transactions");
 
-    for agent_count in [1_000_usize, 10_000_usize] {
+    for agent_count in [1_000_usize, 10_000_usize, 100_000_usize] {
         let mut config = RunConfig {
             agent_count,
             ticks: 1,
