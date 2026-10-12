@@ -470,6 +470,7 @@ pub struct Simulation {
     next_transaction_id: u64,
     #[serde(default)]
     compliance_alerts: Vec<ComplianceAlert>,
+    #[serde(default)]
     external_shocks: Vec<ExternalShock>,
 }
 
