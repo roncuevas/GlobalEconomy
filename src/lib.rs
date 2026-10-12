@@ -1337,7 +1337,13 @@ impl Simulation {
             return;
         }
         let (category, name, description, detection_reason, countermeasure_name, countermeasure_description) = Self::risk_profile(&policy);
-        self.systemic_risk = (self.systemic_risk + policy.private_credit_creation.abs() / 5_000_000.0 + 0.04).clamp(0.0, 1.0);
+        // El riesgo es una señal de presión vigente, no un contador acumulativo.
+        // Decaerlo ligeramente evita que una corrida larga quede saturada en 100%
+        // solo por haber atravesado muchas políticas históricas.
+        let pressure = 0.015
+            + policy.private_credit_creation.abs() / 20_000_000.0
+            + policy.government_debt_change.abs() / 50_000_000.0;
+        self.systemic_risk = (self.systemic_risk * 0.92 + pressure).clamp(0.0, 1.0);
         self.risk_events.push(RiskEvent {
             id: self.risk_events.len() as u64,
             policy_tick: policy.apply_tick,
@@ -1363,7 +1369,13 @@ impl Simulation {
         if category == "currency_security" || category == "payment_integrity" {
             self.security_level = (self.security_level + 0.22).min(1.0);
         }
-        self.systemic_risk = (self.systemic_risk - 0.18).max(0.0);
+        let relief = match category.as_str() {
+            "sovereign_stress" => 0.32,
+            "bank_run" | "liquidity_freeze" => 0.28,
+            "asset_bubble" | "exchange_attack" | "reserve_drain" => 0.24,
+            _ => 0.18,
+        };
+        self.systemic_risk = (self.systemic_risk - relief).max(0.0);
         let after = self.metric_frame();
         self.risk_events[index].countermeasure_applied = true;
         self.risk_events[index].after_countermeasure = Some(after);
@@ -1797,5 +1809,22 @@ mod tests {
         assert_eq!(s.metrics.open_risks, 0);
         assert_eq!(s.metrics.countermeasures, 1);
         assert!(s.risk_events[0].after_countermeasure.as_ref().unwrap().systemic_risk < before);
+    }
+
+    #[test]
+    fn long_history_keeps_risk_as_a_live_signal() {
+        let mut config = config(42);
+        config.ticks = 160;
+        config.catastrophes = true;
+        let mut s = Simulation::new(config);
+        for _ in 0..140 {
+            s.step();
+        }
+        assert_eq!(s.tick, 140);
+        assert!(s.metrics.adverse_events >= 60);
+        assert!(s.metrics.systemic_risk < 0.9);
+        let before = s.metrics.systemic_risk;
+        assert!(s.apply_countermeasure());
+        assert!(s.metrics.systemic_risk < before);
     }
 }
