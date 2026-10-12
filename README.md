@@ -66,5 +66,7 @@ La cabecera de la UI permite cambiar la semilla reproducible y elegir 1,000, 10,
 
 La configuración `scenario_config.evolution` activa estrategias explicables (`saver`, `consumer`, `entrepreneur`) que se ajustan según patrimonio, necesidad e ingreso, con una tasa de mutación reproducible. Con `catastrophes` activo, `shock_probability` e `shock_intensity` generan shocks externos reproducibles por semilla —oferta, corrida bancaria, burbuja de activos o crisis sanitaria— y el snapshot conserva región, impacto y causa. La evolución y los shocks se aplican dentro del ciclo determinista, por lo que también forman parte del replay.
 
+Las métricas en tiempo real incluyen también quiebras acumuladas, concentración de préstamos bancarios, brecha relativa de riqueza entre regiones y movilidad entre deciles de patrimonio; todas se serializan en `Metrics` y se muestran en la cabecera de la UI con tooltip explicativo.
+
 La ruta crítica de cumplimiento indexa las transacciones del tick por entidad, evitando revisar toda la actividad para cada persona. En el entorno de desarrollo, un binario `--release` procesó y devolvió un snapshot de 10,000 agentes en 33 ms por `POST /step` (payload de aproximadamente 2.66 MB). En el canvas, las conexiones PixiJS se agrupan por tipo de flujo y la selección usa una rejilla espacial, reduciendo trabajo por frame sin alterar el resultado económico.
 
