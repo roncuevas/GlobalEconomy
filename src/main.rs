@@ -52,7 +52,10 @@ async fn main() {
         .route("/api/runs/{id}/reset", post(reset_run))
         .route("/api/runs/{id}/policy", post(update_policy))
         .route("/api/runs/{id}/policy/next", post(apply_next_policy))
-        .route("/api/runs/{id}/risk/countermeasure", post(apply_countermeasure))
+        .route(
+            "/api/runs/{id}/risk/countermeasure",
+            post(apply_countermeasure),
+        )
         .route("/api/runs/{id}/policy-mode", post(update_policy_mode))
         .route("/api/runs/{id}/snapshot", get(snapshot))
         .route("/api/runs/{id}/events", get(events))
@@ -162,7 +165,10 @@ struct PolicyModeRequest {
     mode: PolicyMode,
 }
 
-async fn apply_next_policy(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+async fn apply_next_policy(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
     let mut runs = state.runs.write().await;
     match runs.get_mut(&id) {
         Some(r) => {
