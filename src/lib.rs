@@ -2770,6 +2770,22 @@ mod tests {
     }
 
     #[test]
+    fn ten_thousand_agents_complete_a_tick_with_bounded_visual_payload() {
+        let mut config = config(42);
+        config.agent_count = 10_000;
+        config.ticks = 1;
+        let mut s = Simulation::new(config);
+
+        let snapshot = s.step();
+
+        assert_eq!(s.people.len(), 10_000);
+        assert_eq!(snapshot.tick, 1);
+        assert!(snapshot.agents.len() >= 10_000);
+        assert!(snapshot.transactions.len() <= 2_500);
+        assert!(s.people.iter().all(|person| person.money >= 0.0));
+    }
+
+    #[test]
     fn insolvent_company_is_liquidated_with_explainable_event() {
         let mut s = Simulation::new(config(42));
         let company = &mut s.companies[0];
