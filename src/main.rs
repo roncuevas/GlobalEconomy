@@ -326,10 +326,15 @@ async fn compare_runs(
         let Some(record) = runs.get(&run_id) else {
             continue;
         };
-        let selected = request
-            .tick
-            .and_then(|tick| record.history.iter().find(|snapshot| snapshot.tick == tick))
-            .or_else(|| record.history.last());
+        let selected = request.tick.and_then(|tick| {
+            record
+                .history
+                .iter()
+                .find(|snapshot| snapshot.tick == tick)
+                .cloned()
+                .or_else(|| load_snapshot_tick(&state.storage_dir, run_id, tick))
+        });
+        let selected = selected.or_else(|| record.history.last().cloned());
         if let Some(snapshot) = selected {
             rows.push(ComparisonRow {
                 run_id,
