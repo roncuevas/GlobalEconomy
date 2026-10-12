@@ -2,7 +2,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PolicyConfig {
@@ -1985,6 +1985,96 @@ impl Simulation {
                     });
                 }
             }
+            let structured: Vec<&Transaction> = related
+                .iter()
+                .filter(|transaction| {
+                    transaction.from == person.id
+                        && transaction.kind == "transfer"
+                        && (900.0..=1_100.0).contains(&transaction.amount)
+                })
+                .copied()
+                .collect();
+            if structured.len() >= 3 {
+                alerts.push(ComplianceAlert {
+                    id: next_id + alerts.len() as u64,
+                    tick: self.tick,
+                    entity_id: person.id,
+                    category: "aml".into(),
+                    severity: (structured.len() as f64 / 6.0).clamp(0.0, 1.0),
+                    reason: "transferencias repetidas cerca de un umbral sintético de reporte"
+                        .into(),
+                    related_transaction_ids: structured
+                        .iter()
+                        .map(|transaction| transaction.id)
+                        .collect(),
+                    status: "open".into(),
+                });
+            }
+            let circular_ids: Vec<u64> = related
+                .iter()
+                .filter(|outgoing| {
+                    outgoing.from == person.id
+                        && outgoing.kind == "transfer"
+                        && related.iter().any(|incoming| {
+                            incoming.to == person.id
+                                && incoming.from == outgoing.to
+                                && incoming.kind == "transfer"
+                        })
+                })
+                .flat_map(|outgoing| {
+                    related
+                        .iter()
+                        .filter(move |incoming| {
+                            incoming.to == person.id
+                                && incoming.from == outgoing.to
+                                && incoming.kind == "transfer"
+                        })
+                        .map(move |incoming| [outgoing.id, incoming.id])
+                })
+                .flatten()
+                .collect();
+            if !circular_ids.is_empty() {
+                alerts.push(ComplianceAlert {
+                    id: next_id + alerts.len() as u64,
+                    tick: self.tick,
+                    entity_id: person.id,
+                    category: "aml".into(),
+                    severity: 0.85,
+                    reason:
+                        "transferencias circulares entre intermediarios sin actividad comercial"
+                            .into(),
+                    related_transaction_ids: circular_ids,
+                    status: "open".into(),
+                });
+            }
+            let regions: HashSet<u16> = related
+                .iter()
+                .filter(|transaction| transaction.from == person.id)
+                .map(|transaction| transaction.region)
+                .collect();
+            let cross_region_volume: f64 = related
+                .iter()
+                .filter(|transaction| transaction.from == person.id)
+                .map(|transaction| transaction.amount)
+                .sum();
+            if regions.len() >= 2 && cross_region_volume > 3_000.0 {
+                alerts.push(ComplianceAlert {
+                    id: next_id + alerts.len() as u64,
+                    tick: self.tick,
+                    entity_id: person.id,
+                    category: "aml".into(),
+                    severity: (cross_region_volume / 10_000.0).clamp(0.0, 1.0),
+                    reason:
+                        "volumen transferido entre regiones incompatible con la actividad observada"
+                            .into(),
+                    related_transaction_ids: related
+                        .iter()
+                        .filter(|transaction| transaction.from == person.id)
+                        .map(|transaction| transaction.id)
+                        .collect(),
+                    status: "open".into(),
+                });
+            }
             if outflow > person.income + inflow * 0.35 + 1_000.0 && person.wealth < outflow * 0.5 {
                 alerts.push(ComplianceAlert {
                     id: next_id + alerts.len() as u64,
@@ -3018,6 +3108,51 @@ mod tests {
         assert_eq!(alert.entity_id, 0);
         assert_eq!(alert.related_transaction_ids, vec![77]);
         assert!(alert.reason.contains("flujo"));
+    }
+
+    #[test]
+    fn aml_rules_explain_structuring_circularity_and_cross_region_flow() {
+        let mut s = Simulation::new(config(42));
+        for (id, region) in [(77, 0), (78, 1), (79, 2)] {
+            s.transactions.push(Transaction {
+                id,
+                tick: 0,
+                from: 0,
+                to: 9,
+                kind: "transfer".into(),
+                amount: 1_001.0,
+                region,
+                reason: "transferencia sintética de prueba".into(),
+            });
+        }
+        for (id, amount) in [(80, 300.0), (81, 250.0), (82, 200.0)] {
+            s.transactions.push(Transaction {
+                id,
+                tick: 0,
+                from: 9,
+                to: 0,
+                kind: "transfer".into(),
+                amount,
+                region: 0,
+                reason: "retorno sintético de prueba".into(),
+            });
+        }
+
+        s.detect_compliance();
+
+        let alerts: Vec<&ComplianceAlert> = s
+            .compliance_alerts
+            .iter()
+            .filter(|alert| alert.entity_id == 0 && alert.category == "aml")
+            .collect();
+        assert!(alerts.iter().any(|alert| alert.reason.contains("umbral")));
+        assert!(alerts
+            .iter()
+            .any(|alert| alert.reason.contains("circulares")));
+        assert!(alerts.iter().any(|alert| alert.reason.contains("regiones")));
+        assert!(alerts
+            .iter()
+            .all(|alert| !alert.related_transaction_ids.is_empty()));
     }
 
     #[test]
