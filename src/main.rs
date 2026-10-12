@@ -190,12 +190,12 @@ struct PersistedRun {
 
 fn load_snapshot_history(storage_dir: &FsPath, id: Uuid) -> Vec<Snapshot> {
     let path = snapshot_log_path(storage_dir, id);
-    let Ok(contents) = fs::read_to_string(path) else {
+    let Ok(file) = fs::File::open(path) else {
         return Vec::new();
     };
     let mut history = Vec::new();
-    for line in contents.lines() {
-        if let Ok(snapshot) = serde_json::from_str::<Snapshot>(line) {
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if let Ok(snapshot) = serde_json::from_str::<Snapshot>(&line) {
             history.push(snapshot);
             if history.len() > HISTORY_LIMIT {
                 history.remove(0);
@@ -348,21 +348,23 @@ fn load_snapshot_tick(storage_dir: &FsPath, id: Uuid, tick: u64) -> Option<Snaps
             return serde_json::from_str(&line).ok();
         }
     }
-    let contents = fs::read_to_string(path).ok()?;
-    contents
+    let file = fs::File::open(path).ok()?;
+    BufReader::new(file)
         .lines()
-        .filter_map(|line| serde_json::from_str::<Snapshot>(line).ok())
+        .map_while(Result::ok)
+        .filter_map(|line| serde_json::from_str::<Snapshot>(&line).ok())
         .find(|snapshot| snapshot.tick == tick)
 }
 
 fn load_metric_history(storage_dir: &FsPath, id: Uuid) -> Vec<MetricPoint> {
     let path = snapshot_log_path(storage_dir, id);
-    let Ok(contents) = fs::read_to_string(path) else {
+    let Ok(file) = fs::File::open(path) else {
         return Vec::new();
     };
-    contents
+    BufReader::new(file)
         .lines()
-        .filter_map(|line| serde_json::from_str::<PersistedMetricSnapshot>(line).ok())
+        .map_while(Result::ok)
+        .filter_map(|line| serde_json::from_str::<PersistedMetricSnapshot>(&line).ok())
         .map(|snapshot| MetricPoint {
             tick: snapshot.tick,
             metrics: snapshot.metrics,
@@ -1075,6 +1077,27 @@ mod tests {
         let index = fs::read_to_string(snapshot_index_path(&directory, id))
             .expect("snapshot offset index should be persisted");
         assert_eq!(index.lines().count(), 2);
+        fs::remove_dir_all(directory).expect("temporary persistence directory should be removable");
+    }
+
+    #[test]
+    fn snapshot_history_loader_keeps_only_the_bounded_replay_window() {
+        let directory = std::env::temp_dir().join(format!("globaleconomy-{}", Uuid::new_v4()));
+        let id = Uuid::new_v4();
+        let mut sim = Simulation::new(RunConfig {
+            agent_count: 8,
+            ticks: 300,
+            ..RunConfig::default()
+        });
+        for _ in 0..=300 {
+            append_snapshot(&directory, id, &sim.snapshot());
+            sim.step();
+        }
+
+        let history = load_snapshot_history(&directory, id);
+        assert_eq!(history.len(), HISTORY_LIMIT);
+        assert_eq!(history.first().map(|snapshot| snapshot.tick), Some(61));
+        assert_eq!(history.last().map(|snapshot| snapshot.tick), Some(300));
         fs::remove_dir_all(directory).expect("temporary persistence directory should be removable");
     }
 
