@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import { create } from 'zustand';
 import './style.css';
 
@@ -22,4 +23,6 @@ function App(){
   </main>
 }
 function Stat({label,value}:{label:string;value:string|number}){return <div className="stat"><small>{label}</small><strong>{value}</strong></div>}
+
+createRoot(document.getElementById('root')!).render(<App />);
 export default App;
