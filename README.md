@@ -19,6 +19,8 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 - `POST /api/runs/{id}/step` avanza exactamente un tick.
 - `POST /api/runs/{id}/start` y `/pause` controlan el estado.
 - `POST /api/runs/{id}/policy` aplica una política monetaria en tiempo real.
+- `POST /api/runs/{id}/policy/next` aplica el siguiente hito pendiente sin avanzar el tick.
+- `POST /api/runs/{id}/policy-mode` cambia entre `manual` y `automatic`.
 - `GET /api/runs/{id}/snapshot` devuelve el estado visual reducido.
 - `GET /api/runs/{id}/events` devuelve eventos del último tick.
 - `GET /api/runs/{id}/stream` emite snapshots por WebSocket.
@@ -27,7 +29,7 @@ El endpoint de creación acepta `seed`, `model_version`, `agent_count`, `regions
 
 ## Diseño del MVP
 
-El motor está aislado de Axum en `src/lib.rs`. La corrida evolutiva comienza con el mismo patrimonio para todos y genera desigualdad únicamente después de que avanzan los ticks. `monetary_history` registra 69 hitos sintéticos inspirados en la historia monetaria: dinero mercancía y acuñación, banca central y reservas, patrón oro y convertibilidad, guerras y shocks petroleros, Bretton Woods, SDR, tipos flotantes, Plaza/Louvre, ERM y euro, metas de inflación, agregados monetarios, controles y liberalización del crédito, burbujas, crisis asiática y global, QE, LTRO, OMT, tipos cero/negativos, orientación futura, criptoactivos, stablecoins, pagos instantáneos, CBDC, QT y política macroprudencial. Los eventos con riesgo sistémico se pueden activar como catástrofes opcionales. El snapshot expone el banco central, los mercados regionales, los eventos de emisión y la riqueza por nodo.
+El motor está aislado de Axum en `src/lib.rs`. La corrida evolutiva comienza con el mismo patrimonio para todos y genera desigualdad únicamente después de que avanzan los ticks. `monetary_history` registra 69 hitos sintéticos inspirados en la historia monetaria: dinero mercancía y acuñación, banca central y reservas, patrón oro y convertibilidad, guerras y shocks petroleros, Bretton Woods, SDR, tipos flotantes, Plaza/Louvre, ERM y euro, metas de inflación, agregados monetarios, controles y liberalización del crédito, burbujas, crisis asiática y global, QE, LTRO, OMT, tipos cero/negativos, orientación futura, criptoactivos, stablecoins, pagos instantáneos, CBDC, QT y política macroprudencial. En modo manual los nodos continúan evolucionando entre políticas hasta que el usuario aplica el siguiente hito; en modo automático se respeta la agenda de ticks. Los eventos con riesgo sistémico se pueden activar como catástrofes opcionales. El snapshot expone el banco central, los mercados regionales, los eventos de emisión y la riqueza por nodo.
 
 La cronología toma como referencias institucionales la historia de la Reserva Federal, la evolución del Banco de Inglaterra, la línea histórica del FMI sobre Bretton Woods y los SDR, y la creación del euro documentada por el BCE. Es una traducción didáctica al laboratorio, no una reconstrucción cuantitativa de una economía histórica real.
 
