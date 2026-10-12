@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 import './network.css';
 
-type Agent = { id:number; kind:string; region:number; x:number; y:number; size:number; risk_score:number; employed:boolean; wealth:number; wealth_delta:number };
+type Agent = { id:number; kind:string; region:number; sector:number; x:number; y:number; size:number; risk_score:number; employed:boolean; wealth:number; wealth_delta:number };
 type Edge = { source:number; target:number; kind:string; weight:number };
 type Snapshot = { agents:Agent[]; edges:Edge[] };
 type Scene = { edgeLayers:Record<string,Graphics>; nodes:Graphics; glow:Graphics; world:Container; app:Application; zoom:number; grid:Map<string,Agent[]> };
