@@ -1,13 +1,17 @@
+use arrow_array::{ArrayRef, Float64Array, RecordBatch, UInt64Array};
+use arrow_schema::{DataType, Field, Schema};
 use axum::{
+    body::Body,
     extract::ws::{Message, WebSocket},
     extract::{Path, State, WebSocketUpgrade},
-    http::StatusCode,
-    response::IntoResponse,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
 use globaleconomy::{PolicyConfig, PolicyMode, RunConfig, Simulation, Snapshot};
+use parquet::arrow::ArrowWriter;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -119,6 +123,7 @@ async fn main() {
         .route("/api/runs/{id}/snapshot", get(snapshot))
         .route("/api/runs/{id}/history", get(history))
         .route("/api/runs/{id}/metrics", get(metrics))
+        .route("/api/runs/{id}/metrics.parquet", get(metrics_parquet))
         .route("/api/runs/{id}/replay/{tick}", get(replay))
         .route("/api/runs/{id}/events", get(events))
         .route("/api/runs/{id}/transactions", get(transactions))
@@ -562,7 +567,12 @@ async fn metrics(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl In
     let Some(record) = runs.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let mut points = load_metric_history(&state.storage_dir, id);
+    let points = metric_points_for_run(&state.storage_dir, record, id);
+    Json(points).into_response()
+}
+
+fn metric_points_for_run(storage_dir: &FsPath, record: &RunRecord, id: Uuid) -> Vec<MetricPoint> {
+    let mut points = load_metric_history(storage_dir, id);
     if points.is_empty() {
         points = record
             .history
@@ -573,7 +583,111 @@ async fn metrics(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl In
             })
             .collect();
     }
-    Json(points).into_response()
+    points
+}
+
+fn write_metrics_parquet(points: &[MetricPoint]) -> Result<Vec<u8>, String> {
+    let schema = std::sync::Arc::new(Schema::new(vec![
+        Field::new("tick", DataType::UInt64, false),
+        Field::new("gdp", DataType::Float64, false),
+        Field::new("gini", DataType::Float64, false),
+        Field::new("unemployment", DataType::Float64, false),
+        Field::new("inflation", DataType::Float64, false),
+        Field::new("tax_revenue", DataType::Float64, false),
+        Field::new("trade_volume", DataType::Float64, false),
+        Field::new("alerts", DataType::UInt64, false),
+        Field::new("mean_wealth", DataType::Float64, false),
+        Field::new("money_supply", DataType::Float64, false),
+        Field::new("interest_rate", DataType::Float64, false),
+        Field::new("top_10_wealth_share", DataType::Float64, false),
+        Field::new("money_created_this_tick", DataType::Float64, false),
+        Field::new("cumulative_money_created", DataType::Float64, false),
+        Field::new("government_debt", DataType::Float64, false),
+        Field::new("private_debt", DataType::Float64, false),
+        Field::new("debt_created_this_tick", DataType::Float64, false),
+        Field::new("wealth_shock", DataType::Float64, false),
+        Field::new("adverse_events", DataType::UInt64, false),
+        Field::new("open_risks", DataType::UInt64, false),
+        Field::new("countermeasures", DataType::UInt64, false),
+        Field::new("systemic_risk", DataType::Float64, false),
+        Field::new("security_level", DataType::Float64, false),
+        Field::new("aml_alerts", DataType::UInt64, false),
+        Field::new("tax_alerts", DataType::UInt64, false),
+    ]));
+    let ticks = UInt64Array::from_iter_values(points.iter().map(|point| point.tick));
+    let f64_column = |value: fn(&globaleconomy::Metrics) -> f64| -> ArrayRef {
+        std::sync::Arc::new(Float64Array::from_iter_values(
+            points.iter().map(|point| value(&point.metrics)),
+        ))
+    };
+    let u64_column = |value: fn(&globaleconomy::Metrics) -> u64| -> ArrayRef {
+        std::sync::Arc::new(UInt64Array::from_iter_values(
+            points.iter().map(|point| value(&point.metrics)),
+        ))
+    };
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            std::sync::Arc::new(ticks),
+            f64_column(|m| m.gdp),
+            f64_column(|m| m.gini),
+            f64_column(|m| m.unemployment),
+            f64_column(|m| m.inflation),
+            f64_column(|m| m.tax_revenue),
+            f64_column(|m| m.trade_volume),
+            u64_column(|m| m.alerts),
+            f64_column(|m| m.mean_wealth),
+            f64_column(|m| m.money_supply),
+            f64_column(|m| m.interest_rate),
+            f64_column(|m| m.top_10_wealth_share),
+            f64_column(|m| m.money_created_this_tick),
+            f64_column(|m| m.cumulative_money_created),
+            f64_column(|m| m.government_debt),
+            f64_column(|m| m.private_debt),
+            f64_column(|m| m.debt_created_this_tick),
+            f64_column(|m| m.wealth_shock),
+            u64_column(|m| m.adverse_events),
+            u64_column(|m| m.open_risks),
+            u64_column(|m| m.countermeasures),
+            f64_column(|m| m.systemic_risk),
+            f64_column(|m| m.security_level),
+            u64_column(|m| m.aml_alerts),
+            u64_column(|m| m.tax_alerts),
+        ],
+    )
+    .map_err(|error| format!("could not build metric batch: {error}"))?;
+    let mut bytes = Vec::new();
+    let mut writer = ArrowWriter::try_new(&mut bytes, schema, None)
+        .map_err(|error| format!("could not create parquet writer: {error}"))?;
+    writer
+        .write(&batch)
+        .map_err(|error| format!("could not write parquet batch: {error}"))?;
+    writer
+        .close()
+        .map_err(|error| format!("could not close parquet writer: {error}"))?;
+    Ok(bytes)
+}
+
+async fn metrics_parquet(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
+    let runs = state.runs.read().await;
+    let Some(record) = runs.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let points = metric_points_for_run(&state.storage_dir, record, id);
+    match write_metrics_parquet(&points) {
+        Ok(bytes) => Response::builder()
+            .header(header::CONTENT_TYPE, "application/vnd.apache.parquet")
+            .header(
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"run-{id}-metrics.parquet\""),
+            )
+            .body(Body::from(bytes))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        Err(error) => {
+            eprintln!("could not export parquet for run {id}: {error}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 async fn replay(
@@ -732,5 +846,23 @@ mod tests {
         );
         assert_eq!(points[1].metrics.gdp, second.metrics.gdp);
         fs::remove_dir_all(directory).expect("temporary persistence directory should be removable");
+    }
+
+    #[test]
+    fn metric_history_exports_valid_parquet_magic() {
+        let mut sim = Simulation::new(RunConfig::default());
+        let points = vec![
+            MetricPoint {
+                tick: 0,
+                metrics: sim.snapshot().metrics,
+            },
+            MetricPoint {
+                tick: 1,
+                metrics: sim.step().metrics,
+            },
+        ];
+        let bytes = write_metrics_parquet(&points).expect("metrics should export");
+        assert_eq!(&bytes[..4], b"PAR1");
+        assert_eq!(&bytes[bytes.len() - 4..], b"PAR1");
     }
 }
