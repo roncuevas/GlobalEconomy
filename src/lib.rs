@@ -8,6 +8,8 @@ pub struct PolicyConfig {
     pub income_tax_rate: f64,
     pub transfer_per_person: f64,
     pub base_interest_rate: f64,
+    #[serde(default)]
+    pub liquidity_injection: f64,
 }
 
 impl Default for PolicyConfig {
@@ -16,6 +18,7 @@ impl Default for PolicyConfig {
             income_tax_rate: 0.18,
             transfer_per_person: 20.0,
             base_interest_rate: 0.04,
+            liquidity_injection: 0.0,
         }
     }
 }
@@ -86,6 +89,9 @@ pub struct Metrics {
     pub trade_volume: f64,
     pub alerts: u64,
     pub mean_wealth: f64,
+    pub money_supply: f64,
+    pub interest_rate: f64,
+    pub top_10_wealth_share: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -98,13 +104,25 @@ pub struct VisualAgent {
     pub size: f32,
     pub risk_score: f32,
     pub employed: bool,
+    pub wealth: f32,
+    pub wealth_delta: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VisualEdge {
+    pub source: u32,
+    pub target: u32,
+    pub kind: String,
+    pub weight: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
     pub tick: u64,
     pub agents: Vec<VisualAgent>,
+    pub edges: Vec<VisualEdge>,
     pub metrics: Metrics,
+    pub policy: PolicyConfig,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,6 +141,7 @@ pub struct Simulation {
     pub tick: u64,
     pub metrics: Metrics,
     pub events: Vec<EconomicEvent>,
+    previous_wealth: Vec<f64>,
 }
 
 impl Simulation {
@@ -152,6 +171,7 @@ impl Simulation {
             tick: 0,
             metrics: Metrics::default(),
             events: Vec::new(),
+            previous_wealth: vec![0.0; count],
         };
         sim.recalculate_metrics();
         sim
@@ -161,19 +181,29 @@ impl Simulation {
         if self.tick >= self.config.ticks {
             return self.snapshot();
         }
+        self.previous_wealth = self.people.iter().map(|p| p.wealth).collect();
         let seed = self.config.seed ^ self.tick.wrapping_mul(0x9E3779B97F4A7C15);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let wage = self.config.scenario_config.wage;
-        let price = self.config.scenario_config.food_price * (1.0 + (self.tick as f64 / 100_000.0));
+        let policy_rate = self.config.policy_config.base_interest_rate.clamp(0.0, 1.0);
+        let price = self.config.scenario_config.food_price
+            * (1.0 + (self.tick as f64 / 100_000.0) + policy_rate * 0.5);
         let tax_rate = self.config.policy_config.income_tax_rate.clamp(0.0, 1.0);
         let transfer = self.config.policy_config.transfer_per_person.max(0.0);
+        let liquidity = self.config.policy_config.liquidity_injection.max(0.0);
+        let per_person_liquidity = liquidity / self.people.len().max(1) as f64;
         self.events.clear();
         for person in &mut self.people {
-            person.income = if person.employed { wage } else { 0.0 };
+            person.income = if person.employed {
+                wage * (1.0 - policy_rate * 0.25)
+            } else {
+                0.0
+            };
             person.money += person.income;
             let tax = person.income * tax_rate;
             person.money -= tax;
             person.money += transfer;
+            person.money += per_person_liquidity;
             person.need = (person.need + 0.08).min(1.0);
             if person.money >= price && person.need > 0.45 {
                 person.money -= price;
@@ -220,6 +250,8 @@ impl Simulation {
         } else {
             0.0
         };
+        let top_count = (self.people.len() / 10).max(1);
+        let top_wealth: f64 = sorted.iter().rev().take(top_count).sum();
         self.metrics = Metrics {
             gdp: income,
             gini: gini.clamp(0.0, 1.0),
@@ -229,11 +261,14 @@ impl Simulation {
             trade_volume: self.events.iter().map(|e| e.amount).sum(),
             alerts: self.people.iter().filter(|p| p.risk_score > 0.8).count() as u64,
             mean_wealth: total / n,
+            money_supply: self.people.iter().map(|p| p.money).sum(),
+            interest_rate: self.config.policy_config.base_interest_rate,
+            top_10_wealth_share: if total > 0.0 { top_wealth / total } else { 0.0 },
         };
     }
 
     pub fn snapshot(&self) -> Snapshot {
-        let agents = self
+        let mut agents: Vec<VisualAgent> = self
             .people
             .iter()
             .map(|p| VisualAgent {
@@ -242,16 +277,61 @@ impl Simulation {
                 region: p.region,
                 x: ((p.id % 100) as f32 / 100.0),
                 y: ((p.id / 100 % 100) as f32 / 100.0),
-                size: (p.wealth.max(1.0).log10() as f32).clamp(1.0, 5.0),
+                size: (p.wealth.max(1.0).sqrt() as f32 / 9.0).clamp(2.5, 14.0),
                 risk_score: p.risk_score as f32,
                 employed: p.employed,
+                wealth: p.wealth as f32,
+                wealth_delta: (p.wealth - self.previous_wealth[p.id as usize]) as f32,
             })
             .collect();
+        for region in 0..self.config.regions.max(1) as u16 {
+            agents.push(VisualAgent {
+                id: 1_000_000 + region as u32,
+                kind: "market".into(),
+                region,
+                x: 0.1 + region as f32 * 0.8 / self.config.regions.max(1) as f32,
+                y: 0.88,
+                size: 12.0,
+                risk_score: 0.0,
+                employed: true,
+                wealth: self.metrics.money_supply as f32,
+                wealth_delta: 0.0,
+            });
+        }
+        let mut edges = Vec::with_capacity(self.people.len() * 2);
+        for person in &self.people {
+            let market_id = 1_000_000 + person.region as u32;
+            edges.push(VisualEdge {
+                source: person.id,
+                target: market_id,
+                kind: "market".into(),
+                weight: (person.wealth / self.metrics.mean_wealth.max(1.0))
+                    .sqrt()
+                    .clamp(0.3, 2.5) as f32,
+            });
+            if person.id + 1 < self.people.len() as u32
+                && self.people[(person.id + 1) as usize].region == person.region
+            {
+                edges.push(VisualEdge {
+                    source: person.id,
+                    target: person.id + 1,
+                    kind: "trade".into(),
+                    weight: 0.8,
+                });
+            }
+        }
         Snapshot {
             tick: self.tick,
             agents,
+            edges,
             metrics: self.metrics.clone(),
+            policy: self.config.policy_config.clone(),
         }
+    }
+
+    pub fn apply_policy(&mut self, policy: PolicyConfig) {
+        self.config.policy_config = policy;
+        self.recalculate_metrics();
     }
 
     pub fn config_hash(&self) -> String {
