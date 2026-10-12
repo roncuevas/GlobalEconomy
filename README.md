@@ -58,7 +58,7 @@ El módulo de integridad económica analiza las transacciones del tick con regla
 
 La red no se renderiza como cientos de elementos SVG/React. React conserva los controles y las métricas; PixiJS v8 dibuja nodos y conexiones en un canvas WebGL, dejando preparado el camino para 10,000+ agentes. PixiJS documenta WebGL/WebGL2 como renderer estable recomendado para producción y WebGPU como opción más nueva. La UI también permite seleccionar corridas y comparar sus métricas en ticks históricos; la consulta recupera snapshots antiguos desde el log JSONL cuando ya no están en la ventana rápida.
 
-La cabecera de la UI permite cambiar la semilla reproducible y elegir 1,000, 10,000 o 100,000 agentes antes de crear una corrida. La vista rápida filtra nodos por tipo, región, sector, patrimonio y riesgo sin mutar el motor.
+La cabecera de la UI permite cambiar la semilla reproducible y elegir 1,000, 10,000 o 100,000 agentes antes de crear una corrida. La vista rápida filtra nodos por tipo, región, sector, patrimonio y riesgo sin mutar el motor. El panel de política permite experimentar también con impuesto sobre ingresos y transferencias por persona en tiempo real.
 
 La configuración `scenario_config.evolution` activa estrategias explicables (`saver`, `consumer`, `entrepreneur`) que se ajustan según patrimonio, necesidad e ingreso, con una tasa de mutación reproducible. Con `catastrophes` activo, `shock_probability` e `shock_intensity` generan shocks externos reproducibles por semilla —oferta, corrida bancaria, burbuja de activos o crisis sanitaria— y el snapshot conserva región, impacto y causa. La evolución y los shocks se aplican dentro del ciclo determinista, por lo que también forman parte del replay.
 
