@@ -133,9 +133,9 @@ paths:
       responses: { '200': { description: Economic events } }
   /api/runs/{id}/stream:
     get:
-      summary: Stream live snapshots over WebSocket
+      summary: Stream live snapshots, metrics, transactions and alerts over WebSocket
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
-      responses: { '101': { description: WebSocket upgrade } }
+      responses: { '101': { description: WebSocket upgrade; messages use types snapshot, metric_update, transaction, alert and run_status } }
 components:
   schemas:
     RunConfig:

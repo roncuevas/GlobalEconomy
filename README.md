@@ -32,7 +32,7 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 - `GET /api/runs/{id}/events` devuelve eventos del último tick.
 - `GET /api/runs/{id}/transactions` devuelve las transferencias institucionales del último tick.
 - `POST /api/runs/{id}/compliance/{alert_id}/resolve` marca una alerta AML/fiscal como revisada y conserva el cambio en el replay.
-- `GET /api/runs/{id}/stream` emite snapshots por WebSocket.
+- `GET /api/runs/{id}/stream` emite por WebSocket mensajes `snapshot`, `metric_update`, `transaction`, `alert` y `run_status`.
 
 El contrato completo está en [`schemas/openapi.yaml`](schemas/openapi.yaml), incluyendo control de corrida, políticas, riesgos, eventos y WebSocket. Para escenarios pequeños existe un adaptador WASM opcional en [`wasm/README.md`](wasm/README.md), que reutiliza el motor Rust sin duplicar reglas.
 
