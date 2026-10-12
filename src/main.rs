@@ -475,3 +475,28 @@ async fn stream_socket(mut socket: WebSocket, state: AppState, id: Uuid) {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persisted_run_round_trips_simulation_and_history() {
+        let sim = Simulation::new(RunConfig::default());
+        let record = RunRecord {
+            history: vec![sim.snapshot()],
+            sim,
+            status: "paused".into(),
+            created_at: Utc::now(),
+        };
+
+        let bytes = serde_json::to_vec(&record).expect("run should serialize");
+        let restored: RunRecord = serde_json::from_slice(&bytes).expect("run should deserialize");
+
+        assert_eq!(restored.sim.tick, record.sim.tick);
+        assert_eq!(restored.sim.people.len(), record.sim.people.len());
+        assert_eq!(restored.history.len(), 1);
+        assert_eq!(restored.history[0].tick, 0);
+        assert_eq!(restored.status, "paused");
+    }
+}
