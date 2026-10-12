@@ -1634,6 +1634,19 @@ impl Simulation {
         true
     }
 
+    pub fn resolve_compliance_alert(&mut self, alert_id: u64) -> bool {
+        let Some(alert) = self
+            .compliance_alerts
+            .iter_mut()
+            .find(|alert| alert.id == alert_id && alert.status == "open")
+        else {
+            return false;
+        };
+        alert.status = "resolved".into();
+        self.recalculate_metrics();
+        true
+    }
+
     fn apply_policy_event(&mut self, policy: &MonetaryPolicy) {
         self.config.policy_config.base_interest_rate = policy.base_interest_rate;
         self.config.policy_config.liquidity_injection = policy.liquidity_injection;
