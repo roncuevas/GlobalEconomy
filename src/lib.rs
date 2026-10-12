@@ -1230,7 +1230,11 @@ impl Simulation {
                 "Renovar diseños, autenticación pública y trazabilidad de emisiones para proteger la confianza.".into(),
             );
         }
-        if name.contains("Banca") || name.contains("crédito") || name.contains("LTRO") || name.contains("reservas") {
+        if name.contains("Banca")
+            || name.contains("crédito")
+            || name.contains("LTRO")
+            || name.contains("reservas")
+        {
             return (
                 "bank_run".into(),
                 "Corrida bancaria y descalce de liquidez".into(),
@@ -1240,7 +1244,8 @@ impl Simulation {
                 "Abrir liquidez de emergencia contra garantías, reforzar reservas y publicar reglas de acceso.".into(),
             );
         }
-        if name.contains("oro") || name.contains("convertibilidad") || name.contains("Smithsonian") {
+        if name.contains("oro") || name.contains("convertibilidad") || name.contains("Smithsonian")
+        {
             return (
                 "reserve_drain".into(),
                 "Fuga de reservas y presión sobre la paridad".into(),
@@ -1250,7 +1255,10 @@ impl Simulation {
                 "Ajustar temporalmente la liquidez, transparentar reservas y permitir una paridad sostenible.".into(),
             );
         }
-        if name.contains("petróleo") || name.contains("Inflación") || name.contains("Gran inflación") {
+        if name.contains("petróleo")
+            || name.contains("Inflación")
+            || name.contains("Gran inflación")
+        {
             return (
                 "supply_inflation".into(),
                 "Shock de oferta e inflación desanclada".into(),
@@ -1260,7 +1268,8 @@ impl Simulation {
                 "Combinar comunicación creíble, apoyo focalizado y una normalización gradual que no destruya el empleo.".into(),
             );
         }
-        if name.contains("Burbuja") || name.contains("hipotecario") || name.contains("titulización") {
+        if name.contains("Burbuja") || name.contains("hipotecario") || name.contains("titulización")
+        {
             return (
                 "asset_bubble".into(),
                 "Burbuja de activos y apalancamiento".into(),
@@ -1270,7 +1279,12 @@ impl Simulation {
                 "Elevar colchones de capital, limitar concentración y someter el crédito a pruebas de estrés.".into(),
             );
         }
-        if name.contains("cambi") || name.contains("Plaza") || name.contains("Louvre") || name.contains("ERM") || name.contains("flotantes") {
+        if name.contains("cambi")
+            || name.contains("Plaza")
+            || name.contains("Louvre")
+            || name.contains("ERM")
+            || name.contains("flotantes")
+        {
             return (
                 "exchange_attack".into(),
                 "Ataque especulativo y tensión cambiaria".into(),
@@ -1280,7 +1294,8 @@ impl Simulation {
                 "Usar reservas, líneas de liquidez y una comunicación coordinada para evitar ajustes desordenados.".into(),
             );
         }
-        if name.contains("deuda") || name.contains("reestructuración") || name.contains("soberana") {
+        if name.contains("deuda") || name.contains("reestructuración") || name.contains("soberana")
+        {
             return (
                 "sovereign_stress".into(),
                 "Estrés de deuda soberana".into(),
@@ -1300,7 +1315,12 @@ impl Simulation {
                 "Restaurar pagos esenciales con liquidez temporal, garantías transparentes y resolución ordenada.".into(),
             );
         }
-        if name.contains("CBDC") || name.contains("Pagos") || name.contains("electrónicos") || name.contains("stablecoins") || name.contains("Cripto") {
+        if name.contains("CBDC")
+            || name.contains("Pagos")
+            || name.contains("electrónicos")
+            || name.contains("stablecoins")
+            || name.contains("Cripto")
+        {
             return (
                 "payment_integrity".into(),
                 "Fraude y fragmentación de pagos".into(),
@@ -1332,11 +1352,24 @@ impl Simulation {
                         || matches!(self.config.policy_mode, PolicyMode::Manual))
             })
             .cloned()
-        else { return; };
-        if self.risk_events.iter().any(|event| event.policy_tick == policy.apply_tick) {
+        else {
+            return;
+        };
+        if self
+            .risk_events
+            .iter()
+            .any(|event| event.policy_tick == policy.apply_tick)
+        {
             return;
         }
-        let (category, name, description, detection_reason, countermeasure_name, countermeasure_description) = Self::risk_profile(&policy);
+        let (
+            category,
+            name,
+            description,
+            detection_reason,
+            countermeasure_name,
+            countermeasure_description,
+        ) = Self::risk_profile(&policy);
         // El riesgo es una señal de presión vigente, no un contador acumulativo.
         // Decaerlo ligeramente evita que una corrida larga quede saturada en 100%
         // solo por haber atravesado muchas políticas históricas.
@@ -1364,7 +1397,13 @@ impl Simulation {
     }
 
     pub fn apply_countermeasure(&mut self) -> bool {
-        let Some(index) = self.risk_events.iter().rposition(|event| !event.countermeasure_applied) else { return false; };
+        let Some(index) = self
+            .risk_events
+            .iter()
+            .rposition(|event| !event.countermeasure_applied)
+        else {
+            return false;
+        };
         let category = self.risk_events[index].category.clone();
         if category == "currency_security" || category == "payment_integrity" {
             self.security_level = (self.security_level + 0.22).min(1.0);
@@ -1388,7 +1427,8 @@ impl Simulation {
         self.config.policy_config.liquidity_injection = policy.liquidity_injection;
         self.government_debt = (self.government_debt + policy.government_debt_change).max(0.0);
         self.private_debt = (self.private_debt + policy.private_credit_creation).max(0.0);
-        self.debt_created_this_tick = policy.government_debt_change + policy.private_credit_creation;
+        self.debt_created_this_tick =
+            policy.government_debt_change + policy.private_credit_creation;
         self.wealth_shock_this_tick = policy.wealth_shock;
         self.money_created_this_tick = policy.liquidity_injection + policy.private_credit_creation;
         self.money_created_total += self.money_created_this_tick;
@@ -1427,7 +1467,9 @@ impl Simulation {
                     && (!policy.optional || self.config.catastrophes)
             })
             .cloned();
-        let Some(policy) = next else { return false; };
+        let Some(policy) = next else {
+            return false;
+        };
         self.apply_policy_event(&policy);
         self.pending_policy = Some(policy);
         self.recalculate_metrics();
@@ -1445,8 +1487,10 @@ impl Simulation {
         self.detect_upcoming_risk();
         let mut scheduled_policy = self.pending_policy.take();
         if let Some(policy) = scheduled_policy.as_ref() {
-            self.debt_created_this_tick = policy.government_debt_change + policy.private_credit_creation;
-            self.money_created_this_tick = policy.liquidity_injection + policy.private_credit_creation;
+            self.debt_created_this_tick =
+                policy.government_debt_change + policy.private_credit_creation;
+            self.money_created_this_tick =
+                policy.liquidity_injection + policy.private_credit_creation;
             self.wealth_shock_this_tick = policy.wealth_shock;
         }
         if scheduled_policy.is_none() && matches!(self.config.policy_mode, PolicyMode::Automatic) {
@@ -1468,7 +1512,11 @@ impl Simulation {
         let seed = self.config.seed ^ self.tick.wrapping_mul(0x9E3779B97F4A7C15);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let wage = self.config.scenario_config.wage;
-        let policy_rate = self.config.policy_config.base_interest_rate.clamp(-0.05, 1.0);
+        let policy_rate = self
+            .config
+            .policy_config
+            .base_interest_rate
+            .clamp(-0.05, 1.0);
         let price = self.config.scenario_config.food_price
             * (1.0 + (self.tick as f64 / 100_000.0) + policy_rate * 0.5);
         let tax_rate = self.config.policy_config.income_tax_rate.clamp(0.0, 1.0);
@@ -1567,7 +1615,11 @@ impl Simulation {
             tax_revenue: income * tax_rate,
             trade_volume: self.events.iter().map(|e| e.amount).sum(),
             alerts: self.people.iter().filter(|p| p.risk_score > 0.8).count() as u64
-                + self.risk_events.iter().filter(|event| !event.countermeasure_applied).count() as u64,
+                + self
+                    .risk_events
+                    .iter()
+                    .filter(|event| !event.countermeasure_applied)
+                    .count() as u64,
             mean_wealth: total / n,
             money_supply: self.people.iter().map(|p| p.money).sum(),
             interest_rate: self.config.policy_config.base_interest_rate,
@@ -1580,8 +1632,16 @@ impl Simulation {
             monetary_regime,
             wealth_shock: self.wealth_shock_this_tick,
             adverse_events: self.risk_events.len() as u64,
-            open_risks: self.risk_events.iter().filter(|event| !event.countermeasure_applied).count() as u64,
-            countermeasures: self.risk_events.iter().filter(|event| event.countermeasure_applied).count() as u64,
+            open_risks: self
+                .risk_events
+                .iter()
+                .filter(|event| !event.countermeasure_applied)
+                .count() as u64,
+            countermeasures: self
+                .risk_events
+                .iter()
+                .filter(|event| event.countermeasure_applied)
+                .count() as u64,
             systemic_risk: self.systemic_risk,
             security_level: self.security_level,
         };
@@ -1762,6 +1822,152 @@ mod tests {
     }
 
     #[test]
+    fn economic_cycle_records_income_taxes_and_purchases() {
+        let mut s = Simulation::new(config(42));
+        let initial_money: f64 = s.people.iter().map(|person| person.money).sum();
+
+        let snapshot = s.step();
+
+        assert!(s.people.iter().any(|person| person.income > 0.0));
+        assert!(s.metrics.gdp > 0.0);
+        assert!(s.metrics.tax_revenue > 0.0);
+        assert!(s.metrics.trade_volume > 0.0);
+        assert!(s.events.iter().all(|event| event.tick == 0));
+        assert_eq!(snapshot.tick, 1);
+        assert!(s.people.iter().map(|person| person.money).sum::<f64>() > initial_money);
+    }
+
+    #[test]
+    fn historical_schedule_is_ordered_and_explainable() {
+        let history = Simulation::default_monetary_history(1_000);
+        assert!(history.len() >= 60);
+        assert!(history
+            .windows(2)
+            .all(|pair| pair[0].apply_tick < pair[1].apply_tick));
+        assert!(history.iter().all(|policy| {
+            !policy.name.trim().is_empty() && !policy.description.trim().is_empty()
+        }));
+        assert!(history
+            .iter()
+            .any(|policy| policy.name == "Dinero fiduciario"));
+        assert!(history
+            .iter()
+            .any(|policy| policy.name == "Reestructuración de deuda soberana"));
+    }
+
+    #[test]
+    fn automatic_mode_applies_the_last_historical_phase() {
+        let mut config = config(42);
+        config.ticks = 140;
+        config.catastrophes = true;
+        let mut s = Simulation::new(config);
+
+        for _ in 0..137 {
+            s.step();
+        }
+
+        assert_eq!(s.last_policy_apply_tick, 136);
+        assert_eq!(
+            s.snapshot().active_policy.unwrap().name,
+            "Reestructuración de deuda soberana"
+        );
+        assert!(s.snapshot().monetary_history.iter().any(|policy| {
+            policy.apply_tick == 136 && policy.name == "Reestructuración de deuda soberana"
+        }));
+    }
+
+    #[test]
+    fn manual_mode_can_apply_every_historical_phase_in_order() {
+        let mut config = config(42);
+        config.policy_mode = PolicyMode::Manual;
+        config.catastrophes = true;
+        let mut s = Simulation::new(config);
+        let expected: Vec<String> = s
+            .config
+            .monetary_history
+            .iter()
+            .filter(|policy| policy.apply_tick > 0)
+            .map(|policy| policy.name.clone())
+            .collect();
+
+        for name in &expected {
+            assert!(s.apply_next_policy(), "could not apply phase: {name}");
+            assert_eq!(s.snapshot().active_policy.unwrap().name, *name);
+        }
+        assert!(!s.apply_next_policy());
+        assert_eq!(s.risk_events.len(), expected.len());
+    }
+
+    #[test]
+    fn catastrophe_phases_are_optional_and_configurable() {
+        let mut ordinary = config(42);
+        ordinary.ticks = 48;
+        let mut ordinary_sim = Simulation::new(ordinary);
+        for _ in 0..48 {
+            ordinary_sim.step();
+        }
+        assert!(!ordinary_sim
+            .risk_events
+            .iter()
+            .any(|event| event.policy_tick == 44));
+
+        let mut crisis = config(42);
+        crisis.ticks = 48;
+        crisis.catastrophes = true;
+        let mut crisis_sim = Simulation::new(crisis);
+        for _ in 0..48 {
+            crisis_sim.step();
+        }
+        assert!(crisis_sim
+            .risk_events
+            .iter()
+            .any(|event| event.policy_tick == 44));
+    }
+
+    #[test]
+    fn policy_override_changes_live_parameters_without_resetting_agents() {
+        let mut s = Simulation::new(config(42));
+        s.step();
+        let people_before = s.people.len();
+        s.apply_policy(PolicyConfig {
+            income_tax_rate: 0.35,
+            transfer_per_person: 45.0,
+            base_interest_rate: 0.09,
+            liquidity_injection: 12_000.0,
+        });
+
+        assert_eq!(s.people.len(), people_before);
+        assert_eq!(s.metrics.interest_rate, 0.09);
+        assert_eq!(s.config.policy_config.income_tax_rate, 0.35);
+        assert_eq!(s.config.policy_config.liquidity_injection, 12_000.0);
+    }
+
+    #[test]
+    fn step_after_horizon_returns_the_same_snapshot() {
+        let mut config = config(42);
+        config.ticks = 1;
+        let mut s = Simulation::new(config);
+        s.step();
+        let first = serde_json::to_string(&s.snapshot()).unwrap();
+        let second = serde_json::to_string(&s.step()).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn snapshot_contains_visual_nodes_and_interactions() {
+        let mut s = Simulation::new(config(42));
+        s.step();
+        let snapshot = s.snapshot();
+        assert_eq!(snapshot.agents.len(), 200 + 4 + 1);
+        assert!(snapshot.agents.iter().any(|agent| agent.kind == "market"));
+        assert!(snapshot
+            .agents
+            .iter()
+            .any(|agent| agent.kind == "central_bank"));
+        assert!(!snapshot.edges.is_empty());
+    }
+
+    #[test]
     fn scheduled_policy_creates_money_at_tick() {
         let mut config = config(42);
         config.ticks = 20;
@@ -1792,7 +1998,10 @@ mod tests {
         assert!(s.apply_next_policy());
         assert_eq!(s.tick, 2);
         assert_eq!(s.last_policy_apply_tick, 2);
-        assert_eq!(s.snapshot().active_policy.unwrap().name, "Trueque y unidad de cuenta");
+        assert_eq!(
+            s.snapshot().active_policy.unwrap().name,
+            "Trueque y unidad de cuenta"
+        );
         assert!(s.risk_events[0].after_policy.is_some());
     }
 
@@ -1808,7 +2017,110 @@ mod tests {
         assert!(s.apply_countermeasure());
         assert_eq!(s.metrics.open_risks, 0);
         assert_eq!(s.metrics.countermeasures, 1);
-        assert!(s.risk_events[0].after_countermeasure.as_ref().unwrap().systemic_risk < before);
+        assert!(
+            s.risk_events[0]
+                .after_countermeasure
+                .as_ref()
+                .unwrap()
+                .systemic_risk
+                < before
+        );
+    }
+
+    #[test]
+    fn risk_profiles_cover_the_main_adverse_systems() {
+        let policies = Simulation::default_monetary_history(1_000);
+        let categories: std::collections::HashSet<String> = policies
+            .iter()
+            .map(|policy| Simulation::risk_profile(policy).0)
+            .collect();
+
+        for category in [
+            "currency_security",
+            "bank_run",
+            "reserve_drain",
+            "supply_inflation",
+            "asset_bubble",
+            "exchange_attack",
+            "sovereign_stress",
+            "liquidity_freeze",
+            "payment_integrity",
+        ] {
+            assert!(
+                categories.contains(category),
+                "missing risk category: {category}"
+            );
+        }
+    }
+
+    #[test]
+    fn currency_countermeasure_improves_security_and_closes_alert() {
+        let mut custom = config(42);
+        custom.policy_mode = PolicyMode::Manual;
+        custom.monetary_history = vec![MonetaryPolicy {
+            apply_tick: 2,
+            era: "convertible".into(),
+            name: "Papel convertible".into(),
+            description: "Recibos respaldados por reservas".into(),
+            base_interest_rate: 0.04,
+            liquidity_injection: 0.0,
+            government_debt_change: 0.0,
+            private_credit_creation: 0.0,
+            wealth_shock: 0.0,
+            catastrophe: false,
+            optional: false,
+        }];
+        let mut s = Simulation::new(custom);
+        s.step();
+        let before = s.security_level;
+        assert_eq!(s.risk_events[0].category, "currency_security");
+        assert!(s.apply_countermeasure());
+        assert_eq!(s.metrics.open_risks, 0);
+        assert!(s.security_level > before);
+    }
+
+    #[test]
+    fn risk_countermeasure_is_idempotent_when_no_alert_is_open() {
+        let mut s = Simulation::new(config(42));
+        assert!(!s.apply_countermeasure());
+        s.step();
+        assert!(s.apply_countermeasure());
+        assert!(!s.apply_countermeasure());
+    }
+
+    #[test]
+    fn debt_and_money_metrics_match_policy_creation() {
+        let mut custom = config(42);
+        custom.policy_mode = PolicyMode::Manual;
+        custom.monetary_history = vec![MonetaryPolicy {
+            apply_tick: 2,
+            era: "credit".into(),
+            name: "Expansión de crédito".into(),
+            description: "El crédito crea depósitos".into(),
+            base_interest_rate: 0.04,
+            liquidity_injection: 1_000.0,
+            government_debt_change: 2_000.0,
+            private_credit_creation: 3_000.0,
+            wealth_shock: 0.0,
+            catastrophe: false,
+            optional: false,
+        }];
+        let mut s = Simulation::new(custom);
+        s.step();
+        assert!(s.apply_next_policy());
+        assert_eq!(s.metrics.government_debt, 2_000.0);
+        assert_eq!(s.metrics.private_debt, 3_000.0);
+        assert_eq!(s.metrics.money_created_this_tick, 4_000.0);
+        assert_eq!(s.money_events.last().unwrap().amount, 4_000.0);
+    }
+
+    #[test]
+    fn config_hash_is_stable_and_sensitive_to_configuration() {
+        let mut first = Simulation::new(config(42));
+        let second = Simulation::new(config(42));
+        assert_eq!(first.config_hash(), second.config_hash());
+        first.config.policy_config.base_interest_rate = 0.08;
+        assert_ne!(first.config_hash(), second.config_hash());
     }
 
     #[test]
