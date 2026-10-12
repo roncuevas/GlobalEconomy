@@ -75,6 +75,18 @@ struct ComparisonResponse {
     runs: Vec<ComparisonRow>,
 }
 
+#[derive(Serialize)]
+struct MetricPoint {
+    tick: u64,
+    metrics: globaleconomy::Metrics,
+}
+
+#[derive(Deserialize)]
+struct PersistedMetricSnapshot {
+    tick: u64,
+    metrics: globaleconomy::Metrics,
+}
+
 const HISTORY_LIMIT: usize = 240;
 const DATA_DIR_ENV: &str = "GLOBALECONOMY_DATA_DIR";
 
@@ -106,6 +118,7 @@ async fn main() {
         .route("/api/runs/{id}/policy-mode", post(update_policy_mode))
         .route("/api/runs/{id}/snapshot", get(snapshot))
         .route("/api/runs/{id}/history", get(history))
+        .route("/api/runs/{id}/metrics", get(metrics))
         .route("/api/runs/{id}/replay/{tick}", get(replay))
         .route("/api/runs/{id}/events", get(events))
         .route("/api/runs/{id}/transactions", get(transactions))
@@ -267,6 +280,21 @@ fn load_snapshot_tick(storage_dir: &FsPath, id: Uuid, tick: u64) -> Option<Snaps
         .lines()
         .filter_map(|line| serde_json::from_str::<Snapshot>(line).ok())
         .find(|snapshot| snapshot.tick == tick)
+}
+
+fn load_metric_history(storage_dir: &FsPath, id: Uuid) -> Vec<MetricPoint> {
+    let path = snapshot_log_path(storage_dir, id);
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .filter_map(|line| serde_json::from_str::<PersistedMetricSnapshot>(line).ok())
+        .map(|snapshot| MetricPoint {
+            tick: snapshot.tick,
+            metrics: snapshot.metrics,
+        })
+        .collect()
 }
 
 async fn create_run(
@@ -529,6 +557,25 @@ async fn history(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl In
         .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 
+async fn metrics(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+    let runs = state.runs.read().await;
+    let Some(record) = runs.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut points = load_metric_history(&state.storage_dir, id);
+    if points.is_empty() {
+        points = record
+            .history
+            .iter()
+            .map(|snapshot| MetricPoint {
+                tick: snapshot.tick,
+                metrics: snapshot.metrics.clone(),
+            })
+            .collect();
+    }
+    Json(points).into_response()
+}
+
 async fn replay(
     State(state): State<AppState>,
     Path((id, tick)): Path<(Uuid, u64)>,
@@ -664,6 +711,26 @@ mod tests {
         let loaded = load_snapshot_tick(&directory, id, 1).expect("tick should be indexed");
         assert_eq!(loaded.tick, second.tick);
         assert_eq!(load_snapshot_history(&directory, id).len(), 2);
+        fs::remove_dir_all(directory).expect("temporary persistence directory should be removable");
+    }
+
+    #[test]
+    fn snapshot_log_produces_compact_metric_history() {
+        let directory = std::env::temp_dir().join(format!("globaleconomy-{}", Uuid::new_v4()));
+        let id = Uuid::new_v4();
+        let mut sim = Simulation::new(RunConfig::default());
+        let first = sim.snapshot();
+        let second = sim.step();
+
+        append_snapshot(&directory, id, &first);
+        append_snapshot(&directory, id, &second);
+
+        let points = load_metric_history(&directory, id);
+        assert_eq!(
+            points.iter().map(|point| point.tick).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(points[1].metrics.gdp, second.metrics.gdp);
         fs::remove_dir_all(directory).expect("temporary persistence directory should be removable");
     }
 }
