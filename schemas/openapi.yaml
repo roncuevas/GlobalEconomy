@@ -10,11 +10,38 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/RunConfig' } } }
       responses: { '200': { description: Created run } }
+    get:
+      summary: List active runs and replay windows
+      responses:
+        '200':
+          description: Active runs
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/RunSummary' } } } }
+  /api/runs/compare:
+    post:
+      summary: Compare metrics across runs
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CompareRequest' } } }
+      responses: { '200': { description: Comparison result } }
   /api/runs/{id}/snapshot:
     get:
       summary: Get visual snapshot
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses: { '200': { description: Snapshot } }
+  /api/runs/{id}/history:
+    get:
+      summary: Get bounded local snapshot history
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Snapshot history } }
+  /api/runs/{id}/replay/{tick}:
+    get:
+      summary: Get an exact historical snapshot
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: tick, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200': { description: Historical snapshot }
+        '410': { description: Tick is outside the replay window }
   /api/runs/{id}/policy:
     post:
       summary: Apply monetary policy immediately
@@ -47,6 +74,22 @@ components:
         catastrophes: { type: boolean, default: false }
         policy_mode: { type: string, enum: [manual, automatic], default: automatic }
         institutions: { $ref: '#/components/schemas/InstitutionConfig' }
+    RunSummary:
+      type: object
+      required: [run_id, status, tick, created_at, config_hash, history_ticks]
+      properties:
+        run_id: { type: string, format: uuid }
+        status: { type: string }
+        tick: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        config_hash: { type: string }
+        history_ticks: { type: array, items: { type: integer, format: int64 } }
+    CompareRequest:
+      type: object
+      required: [run_ids]
+      properties:
+        run_ids: { type: array, items: { type: string, format: uuid }, minItems: 1 }
+        tick: { type: integer, format: int64 }
     Snapshot:
       type: object
       properties:

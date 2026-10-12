@@ -22,6 +22,7 @@ struct RunRecord {
     sim: Simulation,
     status: String,
     created_at: DateTime<Utc>,
+    history: Vec<Snapshot>,
 }
 #[derive(Serialize)]
 struct RunCreated {
@@ -37,6 +38,37 @@ struct StatusResponse {
     tick: u64,
 }
 
+#[derive(Serialize)]
+struct RunSummary {
+    run_id: Uuid,
+    status: String,
+    tick: u64,
+    created_at: DateTime<Utc>,
+    config_hash: String,
+    history_ticks: Vec<u64>,
+}
+
+#[derive(Deserialize)]
+struct CompareRequest {
+    run_ids: Vec<Uuid>,
+    tick: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct ComparisonRow {
+    run_id: Uuid,
+    tick: u64,
+    metrics: globaleconomy::Metrics,
+}
+
+#[derive(Serialize)]
+struct ComparisonResponse {
+    requested_tick: Option<u64>,
+    runs: Vec<ComparisonRow>,
+}
+
+const HISTORY_LIMIT: usize = 240;
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -46,6 +78,8 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/api/runs", post(create_run))
+        .route("/api/runs", get(list_runs))
+        .route("/api/runs/compare", post(compare_runs))
         .route("/api/runs/{id}/start", post(start_run))
         .route("/api/runs/{id}/pause", post(pause_run))
         .route("/api/runs/{id}/step", post(step_run))
@@ -58,6 +92,8 @@ async fn main() {
         )
         .route("/api/runs/{id}/policy-mode", post(update_policy_mode))
         .route("/api/runs/{id}/snapshot", get(snapshot))
+        .route("/api/runs/{id}/history", get(history))
+        .route("/api/runs/{id}/replay/{tick}", get(replay))
         .route("/api/runs/{id}/events", get(events))
         .route("/api/runs/{id}/transactions", get(transactions))
         .route("/api/runs/{id}/stream", get(stream))
@@ -73,6 +109,7 @@ async fn create_run(
     Json(config): Json<RunConfig>,
 ) -> Json<RunCreated> {
     let sim = Simulation::new(config);
+    let initial_snapshot = sim.snapshot();
     let id = Uuid::new_v4();
     let created_at = Utc::now();
     let response = RunCreated {
@@ -87,9 +124,67 @@ async fn create_run(
             sim,
             status: "paused".into(),
             created_at,
+            history: vec![initial_snapshot],
         },
     );
     Json(response)
+}
+
+async fn list_runs(State(state): State<AppState>) -> Json<Vec<RunSummary>> {
+    let runs = state.runs.read().await;
+    let mut summaries: Vec<_> = runs
+        .iter()
+        .map(|(id, record)| RunSummary {
+            run_id: *id,
+            status: record.status.clone(),
+            tick: record.sim.tick,
+            created_at: record.created_at,
+            config_hash: record.sim.config_hash(),
+            history_ticks: record
+                .history
+                .iter()
+                .map(|snapshot| snapshot.tick)
+                .collect(),
+        })
+        .collect();
+    summaries.sort_by_key(|summary| summary.created_at);
+    Json(summaries)
+}
+
+async fn compare_runs(
+    State(state): State<AppState>,
+    Json(request): Json<CompareRequest>,
+) -> impl IntoResponse {
+    let runs = state.runs.read().await;
+    let mut rows = Vec::new();
+    for run_id in request.run_ids {
+        let Some(record) = runs.get(&run_id) else {
+            continue;
+        };
+        let selected = request
+            .tick
+            .and_then(|tick| record.history.iter().find(|snapshot| snapshot.tick == tick))
+            .or_else(|| record.history.last());
+        if let Some(snapshot) = selected {
+            rows.push(ComparisonRow {
+                run_id,
+                tick: snapshot.tick,
+                metrics: snapshot.metrics.clone(),
+            });
+        }
+    }
+    Json(ComparisonResponse {
+        requested_tick: request.tick,
+        runs: rows,
+    })
+}
+
+fn remember(record: &mut RunRecord) {
+    record.history.push(record.sim.snapshot());
+    if record.history.len() > HISTORY_LIMIT {
+        let excess = record.history.len() - HISTORY_LIMIT;
+        record.history.drain(..excess);
+    }
 }
 async fn start_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
     let mut runs = state.runs.write().await;
@@ -126,6 +221,11 @@ async fn step_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl I
     match runs.get_mut(&id) {
         Some(r) => {
             let snapshot = r.sim.step();
+            r.history.push(snapshot.clone());
+            if r.history.len() > HISTORY_LIMIT {
+                let excess = r.history.len() - HISTORY_LIMIT;
+                r.history.drain(..excess);
+            }
             Json(snapshot).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
@@ -137,6 +237,8 @@ async fn reset_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl 
         Some(r) => {
             r.sim = Simulation::new(r.sim.config.clone());
             r.status = "paused".into();
+            r.history.clear();
+            r.history.push(r.sim.snapshot());
             Json(StatusResponse {
                 run_id: id,
                 status: r.status.clone(),
@@ -156,6 +258,7 @@ async fn update_policy(
     match runs.get_mut(&id) {
         Some(r) => {
             r.sim.apply_policy(policy);
+            remember(r);
             Json(r.sim.snapshot()).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
@@ -174,6 +277,7 @@ async fn apply_next_policy(
     match runs.get_mut(&id) {
         Some(r) => {
             if r.sim.apply_next_policy() {
+                remember(r);
                 Json(r.sim.snapshot()).into_response()
             } else {
                 StatusCode::CONFLICT.into_response()
@@ -192,6 +296,7 @@ async fn update_policy_mode(
     match runs.get_mut(&id) {
         Some(r) => {
             r.sim.config.policy_mode = request.mode;
+            remember(r);
             Json(r.sim.snapshot()).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
@@ -206,6 +311,7 @@ async fn apply_countermeasure(
     match runs.get_mut(&id) {
         Some(r) => {
             if r.sim.apply_countermeasure() {
+                remember(r);
                 Json(r.sim.snapshot()).into_response()
             } else {
                 StatusCode::CONFLICT.into_response()
@@ -213,6 +319,29 @@ async fn apply_countermeasure(
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+async fn history(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+    let runs = state.runs.read().await;
+    runs.get(&id)
+        .map(|record| Json(record.history.clone()).into_response())
+        .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+}
+
+async fn replay(
+    State(state): State<AppState>,
+    Path((id, tick)): Path<(Uuid, u64)>,
+) -> impl IntoResponse {
+    let runs = state.runs.read().await;
+    let Some(record) = runs.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    record
+        .history
+        .iter()
+        .find(|snapshot| snapshot.tick == tick)
+        .map(|snapshot| Json(snapshot.clone()).into_response())
+        .unwrap_or_else(|| StatusCode::GONE.into_response())
 }
 async fn snapshot(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
     let runs = state.runs.read().await;

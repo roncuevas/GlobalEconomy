@@ -16,6 +16,8 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 ## API mínima
 
 - `POST /api/runs` crea una corrida.
+- `GET /api/runs` lista corridas activas con tick, hash de configuración y ticks disponibles para replay.
+- `POST /api/runs/compare` compara métricas de varias corridas en un tick común.
 - `POST /api/runs/{id}/step` avanza exactamente un tick.
 - `POST /api/runs/{id}/start` y `/pause` controlan el estado.
 - `POST /api/runs/{id}/policy` aplica una política monetaria en tiempo real.
@@ -23,11 +25,15 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 - `POST /api/runs/{id}/policy-mode` cambia entre `manual` y `automatic`.
 - `POST /api/runs/{id}/risk/countermeasure` aplica la contramedida del riesgo abierto más reciente.
 - `GET /api/runs/{id}/snapshot` devuelve el estado visual reducido.
+- `GET /api/runs/{id}/history` devuelve el historial local acotado de snapshots.
+- `GET /api/runs/{id}/replay/{tick}` recupera un snapshot histórico exacto; devuelve `410` si ya salió de la ventana local.
 - `GET /api/runs/{id}/events` devuelve eventos del último tick.
 - `GET /api/runs/{id}/transactions` devuelve las transferencias institucionales del último tick.
 - `GET /api/runs/{id}/stream` emite snapshots por WebSocket.
 
 El endpoint de creación acepta `seed`, `model_version`, `agent_count`, `regions`, `ticks`, `policy_config` y `scenario_config`. El límite defensivo actual es 100,000 agentes; el valor por defecto es 10,000.
+
+El servidor mantiene los últimos 240 snapshots por corrida para replay local y comparación rápida. Esta primera capa es deliberadamente acotada para no hacer crecer la memoria sin límite; la persistencia duradera en SQLite/Parquet será la siguiente extensión.
 
 ## Diseño del MVP
 
