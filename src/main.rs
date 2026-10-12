@@ -17,6 +17,7 @@ use std::{
     collections::HashMap,
     fs,
     io::Write,
+    io::{BufRead, BufReader, Seek, SeekFrom},
     path::{Path as FsPath, PathBuf},
     sync::Arc,
 };
@@ -147,6 +148,10 @@ fn snapshot_log_path(storage_dir: &FsPath, id: Uuid) -> PathBuf {
     storage_dir.join(format!("run-{id}.snapshots.jsonl"))
 }
 
+fn snapshot_index_path(storage_dir: &FsPath, id: Uuid) -> PathBuf {
+    storage_dir.join(format!("run-{id}.snapshots.index"))
+}
+
 #[derive(Serialize, Deserialize)]
 struct PersistedRun {
     sim: Simulation,
@@ -261,9 +266,25 @@ fn append_snapshot(storage_dir: &FsPath, id: Uuid, snapshot: &Snapshot) {
         eprintln!("could not serialize snapshot for run {id}");
         return;
     };
-    match fs::OpenOptions::new().create(true).append(true).open(&path) {
+    match fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .read(true)
+        .open(&path)
+    {
         Ok(mut file) => {
-            if let Err(error) = file.write_all(&bytes).and_then(|_| file.write_all(b"\n")) {
+            let result = (|| {
+                let offset = file.seek(SeekFrom::End(0))?;
+                file.write_all(&bytes)?;
+                file.write_all(b"\n")?;
+                let index_path = snapshot_index_path(storage_dir, id);
+                let mut index = fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(index_path)?;
+                writeln!(index, "{} {}", snapshot.tick, offset)
+            })();
+            if let Err(error) = result {
                 eprintln!("could not append snapshot {path:?}: {error}");
             }
         }
@@ -276,10 +297,28 @@ fn truncate_snapshot_log(storage_dir: &FsPath, id: Uuid) {
     if let Err(error) = fs::write(&path, []) {
         eprintln!("could not reset snapshot log {path:?}: {error}");
     }
+    let index_path = snapshot_index_path(storage_dir, id);
+    if let Err(error) = fs::write(&index_path, []) {
+        eprintln!("could not reset snapshot index {index_path:?}: {error}");
+    }
 }
 
 fn load_snapshot_tick(storage_dir: &FsPath, id: Uuid, tick: u64) -> Option<Snapshot> {
     let path = snapshot_log_path(storage_dir, id);
+    if let Ok(index) = fs::read_to_string(snapshot_index_path(storage_dir, id)) {
+        if let Some(offset) = index.lines().rev().find_map(|line| {
+            let mut fields = line.split_whitespace();
+            (fields.next()?.parse::<u64>().ok()? == tick)
+                .then(|| fields.next()?.parse::<u64>().ok())
+                .flatten()
+        }) {
+            let mut file = fs::File::open(path).ok()?;
+            file.seek(SeekFrom::Start(offset)).ok()?;
+            let mut line = String::new();
+            BufReader::new(file).read_line(&mut line).ok()?;
+            return serde_json::from_str(&line).ok();
+        }
+    }
     let contents = fs::read_to_string(path).ok()?;
     contents
         .lines()
@@ -825,6 +864,9 @@ mod tests {
         let loaded = load_snapshot_tick(&directory, id, 1).expect("tick should be indexed");
         assert_eq!(loaded.tick, second.tick);
         assert_eq!(load_snapshot_history(&directory, id).len(), 2);
+        let index = fs::read_to_string(snapshot_index_path(&directory, id))
+            .expect("snapshot offset index should be persisted");
+        assert_eq!(index.lines().count(), 2);
         fs::remove_dir_all(directory).expect("temporary persistence directory should be removable");
     }
 
