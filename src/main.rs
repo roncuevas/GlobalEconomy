@@ -7,7 +7,7 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Utc};
-use globaleconomy::{RunConfig, Simulation, Snapshot};
+use globaleconomy::{PolicyConfig, RunConfig, Simulation, Snapshot};
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -50,6 +50,7 @@ async fn main() {
         .route("/api/runs/{id}/pause", post(pause_run))
         .route("/api/runs/{id}/step", post(step_run))
         .route("/api/runs/{id}/reset", post(reset_run))
+        .route("/api/runs/{id}/policy", post(update_policy))
         .route("/api/runs/{id}/snapshot", get(snapshot))
         .route("/api/runs/{id}/events", get(events))
         .route("/api/runs/{id}/stream", get(stream))
@@ -135,6 +136,20 @@ async fn reset_run(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl 
                 tick: r.sim.tick,
             })
             .into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+async fn update_policy(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(policy): Json<PolicyConfig>,
+) -> impl IntoResponse {
+    let mut runs = state.runs.write().await;
+    match runs.get_mut(&id) {
+        Some(r) => {
+            r.sim.apply_policy(policy);
+            Json(r.sim.snapshot()).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }
