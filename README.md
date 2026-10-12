@@ -21,6 +21,7 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 - `POST /api/runs/{id}/policy` aplica una política monetaria en tiempo real.
 - `POST /api/runs/{id}/policy/next` aplica el siguiente hito pendiente sin avanzar el tick.
 - `POST /api/runs/{id}/policy-mode` cambia entre `manual` y `automatic`.
+- `POST /api/runs/{id}/risk/countermeasure` aplica la contramedida del riesgo abierto más reciente.
 - `GET /api/runs/{id}/snapshot` devuelve el estado visual reducido.
 - `GET /api/runs/{id}/events` devuelve eventos del último tick.
 - `GET /api/runs/{id}/stream` emite snapshots por WebSocket.
@@ -34,6 +35,8 @@ El motor está aislado de Axum en `src/lib.rs`. La corrida evolutiva comienza co
 La cronología toma como referencias institucionales la historia de la Reserva Federal, la evolución del Banco de Inglaterra, la línea histórica del FMI sobre Bretton Woods y los SDR, y la creación del euro documentada por el BCE. Es una traducción didáctica al laboratorio, no una reconstrucción cuantitativa de una economía histórica real.
 
 `catastrophes` es opcional y reproducible por semilla. Cuando está activo, se aplican además crisis bancaria, burbuja inmobiliaria, crisis de deuda soberana, shock sanitario e inflación de oferta; cuando está apagado, esos eventos permanecen visibles como escenarios alternativos pero no alteran la corrida.
+
+Antes de cada política pendiente el motor puede detectar un precursor adverso: falsificación y pérdida de confianza, corrida bancaria, fuga de reservas, inflación de oferta, burbuja y apalancamiento, ataque cambiario, estrés soberano, congelamiento de liquidez o problemas de integridad de pagos. Cada alerta conserva causa, señal de detección, severidad, contramedida y marcos métricos antes/después de la política y de la respuesta. La lógica es sintética y defensiva; no contiene instrucciones operativas para cometer delitos.
 
 La red no se renderiza como cientos de elementos SVG/React. React conserva los controles y las métricas; PixiJS v8 dibuja nodos y conexiones en un canvas WebGL, dejando preparado el camino para 10,000+ agentes. PixiJS documenta WebGL/WebGL2 como renderer estable recomendado para producción y WebGPU como opción más nueva. Empresas, bancos comerciales, quiebras, AML/fiscal avanzado, Parquet/DuckDB y WASM quedan como extensiones posteriores del plan.
 
