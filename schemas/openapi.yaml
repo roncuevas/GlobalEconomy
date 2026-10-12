@@ -205,7 +205,7 @@ components:
       properties:
         tick: { type: integer }
         agents: { type: array, items: { type: object } }
-        metrics: { type: object }
+        metrics: { $ref: '#/components/schemas/Metrics' }
         compliance_alerts: { type: array, items: { $ref: '#/components/schemas/ComplianceAlert' } }
         external_shocks: { type: array, items: { $ref: '#/components/schemas/ExternalShock' } }
     MetricPoint:
@@ -217,7 +217,37 @@ components:
     Metrics:
       type: object
       description: Compact aggregate indicators for a tick.
-      additionalProperties: { type: number }
+      required: [gdp, gini, unemployment, inflation, tax_revenue, trade_volume, money_supply, monetary_regime, bankruptcies, bank_concentration, regional_wealth_gap, social_mobility]
+      properties:
+        gdp: { type: number }
+        gini: { type: number, minimum: 0, maximum: 1 }
+        unemployment: { type: number, minimum: 0, maximum: 1 }
+        inflation: { type: number }
+        tax_revenue: { type: number }
+        trade_volume: { type: number }
+        alerts: { type: integer, format: int64 }
+        mean_wealth: { type: number }
+        money_supply: { type: number }
+        interest_rate: { type: number }
+        top_10_wealth_share: { type: number, minimum: 0, maximum: 1 }
+        money_created_this_tick: { type: number }
+        cumulative_money_created: { type: number }
+        government_debt: { type: number }
+        private_debt: { type: number }
+        debt_created_this_tick: { type: number }
+        monetary_regime: { type: string }
+        wealth_shock: { type: number }
+        adverse_events: { type: integer, format: int64 }
+        open_risks: { type: integer, format: int64 }
+        countermeasures: { type: integer, format: int64 }
+        systemic_risk: { type: number, minimum: 0, maximum: 1 }
+        security_level: { type: number, minimum: 0, maximum: 1 }
+        aml_alerts: { type: integer, format: int64 }
+        tax_alerts: { type: integer, format: int64 }
+        bankruptcies: { type: integer, format: int64 }
+        bank_concentration: { type: number, minimum: 0, maximum: 1 }
+        regional_wealth_gap: { type: number, minimum: 0, maximum: 1 }
+        social_mobility: { type: number, minimum: 0, maximum: 1 }
     PolicyConfig:
       type: object
       properties:
