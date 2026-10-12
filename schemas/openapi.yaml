@@ -65,6 +65,15 @@ paths:
         '200':
           description: Metric points without visual agents
           content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MetricPoint' } } } }
+  /api/runs/{id}/metrics.parquet:
+    get:
+      summary: Download compact metric history as Parquet
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Columnar metric history for DuckDB or notebooks
+          content: { application/vnd.apache.parquet: { schema: { type: string, format: binary } } }
+        '404': { description: Run not found }
   /api/runs/{id}/replay/{tick}:
     get:
       summary: Get an exact historical snapshot

@@ -27,6 +27,7 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 - `GET /api/runs/{id}/snapshot` devuelve el estado visual reducido.
 - `GET /api/runs/{id}/history` devuelve el historial local acotado de snapshots.
 - `GET /api/runs/{id}/metrics` devuelve solo la serie compacta de métricas persistidas, sin agentes ni conexiones.
+- `GET /api/runs/{id}/metrics.parquet` descarga esa serie en Parquet columnar para DuckDB, Python o notebooks.
 - `GET /api/runs/{id}/replay/{tick}` recupera un snapshot histórico exacto; devuelve `410` si ya salió de la ventana local.
 - `GET /api/runs/{id}/events` devuelve eventos del último tick.
 - `GET /api/runs/{id}/transactions` devuelve las transferencias institucionales del último tick.
@@ -37,7 +38,7 @@ El contrato completo está en [`schemas/openapi.yaml`](schemas/openapi.yaml), in
 
 El endpoint de creación acepta `seed`, `model_version`, `agent_count`, `regions`, `ticks`, `policy_config` y `scenario_config`. El límite defensivo actual es 100,000 agentes; el valor por defecto es 10,000.
 
-El servidor mantiene los últimos 240 snapshots por corrida en memoria para replay local y comparación rápida. El estado actual se serializa en `data/runs/run-{id}.json` usando escritura temporal y renombrado atómico; el historial completo se agrega en `run-{id}.snapshots.jsonl`, una línea por snapshot, sin reescribir toda la corrida. Al reiniciar se restaura la ventana rápida y `/replay/{tick}` puede recuperar ticks antiguos directamente del log. Puedes cambiar la carpeta con `GLOBALECONOMY_DATA_DIR`. SQLite/Parquet queda preparado como evolución para consultas analíticas y compresión por lotes.
+El servidor mantiene los últimos 240 snapshots por corrida en memoria para replay local y comparación rápida. El estado actual se serializa en `data/runs/run-{id}.json` usando escritura temporal y renombrado atómico; el historial completo se agrega en `run-{id}.snapshots.jsonl`, una línea por snapshot, sin reescribir toda la corrida. Al reiniciar se restaura la ventana rápida y `/replay/{tick}` puede recuperar ticks antiguos directamente del log. Puedes cambiar la carpeta con `GLOBALECONOMY_DATA_DIR`. La serie compacta se puede exportar a Parquet y consultar localmente, por ejemplo: `duckdb -c "SELECT tick, gdp, gini, money_supply FROM read_parquet('run-<id>-metrics.parquet') ORDER BY tick"`.
 
 ## Diseño del MVP
 
