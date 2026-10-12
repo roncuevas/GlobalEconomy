@@ -3,14 +3,16 @@ use arrow_schema::{DataType, Field, Schema};
 use axum::{
     body::Body,
     extract::ws::{Message, WebSocket},
-    extract::{Path, State, WebSocketUpgrade},
+    extract::{Path, Query, State, WebSocketUpgrade},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
-use globaleconomy::{PolicyConfig, PolicyMode, RunConfig, Simulation, Snapshot};
+use globaleconomy::{
+    EconomicEvent, PolicyConfig, PolicyMode, RunConfig, Simulation, Snapshot, Transaction,
+};
 use parquet::arrow::ArrowWriter;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -90,6 +92,28 @@ struct MetricPoint {
 struct PersistedMetricSnapshot {
     tick: u64,
     metrics: globaleconomy::Metrics,
+}
+
+#[derive(Default, Deserialize)]
+struct EventQuery {
+    #[serde(rename = "type")]
+    event_type: Option<String>,
+    tick: Option<u64>,
+    agent: Option<u32>,
+    region: Option<u16>,
+    risk: Option<bool>,
+    min_amount: Option<f64>,
+    max_amount: Option<f64>,
+}
+
+#[derive(Default, Deserialize)]
+struct TransactionQuery {
+    tick: Option<u64>,
+    kind: Option<String>,
+    agent: Option<u32>,
+    region: Option<u16>,
+    min_amount: Option<f64>,
+    max_amount: Option<f64>,
 }
 
 const HISTORY_LIMIT: usize = 240;
@@ -752,17 +776,85 @@ async fn snapshot(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl I
         .map(|r| Json(r.sim.snapshot()).into_response())
         .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
-async fn events(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+fn filter_events(sim: &Simulation, query: &EventQuery) -> Vec<EconomicEvent> {
+    sim.events
+        .iter()
+        .filter(|event| query.tick.is_none_or(|tick| event.tick == tick))
+        .filter(|event| {
+            query
+                .event_type
+                .as_ref()
+                .is_none_or(|kind| &event.event_type == kind)
+        })
+        .filter(|event| query.agent.is_none_or(|agent| event.agent_id == agent))
+        .filter(|event| query.region.is_none_or(|region| event.region == region))
+        .filter(|event| query.min_amount.is_none_or(|amount| event.amount >= amount))
+        .filter(|event| query.max_amount.is_none_or(|amount| event.amount <= amount))
+        .filter(|event| {
+            !query.risk.unwrap_or(false)
+                || sim
+                    .people
+                    .iter()
+                    .find(|person| person.id == event.agent_id)
+                    .is_some_and(|person| person.risk_score >= 0.8)
+        })
+        .cloned()
+        .collect()
+}
+
+fn filter_transactions(sim: &Simulation, query: &TransactionQuery) -> Vec<Transaction> {
+    sim.transactions
+        .iter()
+        .filter(|transaction| query.tick.is_none_or(|tick| transaction.tick == tick))
+        .filter(|transaction| {
+            query
+                .kind
+                .as_ref()
+                .is_none_or(|kind| &transaction.kind == kind)
+        })
+        .filter(|transaction| {
+            query
+                .agent
+                .is_none_or(|agent| transaction.from == agent || transaction.to == agent)
+        })
+        .filter(|transaction| {
+            query
+                .region
+                .is_none_or(|region| transaction.region == region)
+        })
+        .filter(|transaction| {
+            query
+                .min_amount
+                .is_none_or(|amount| transaction.amount >= amount)
+        })
+        .filter(|transaction| {
+            query
+                .max_amount
+                .is_none_or(|amount| transaction.amount <= amount)
+        })
+        .cloned()
+        .collect()
+}
+
+async fn events(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<EventQuery>,
+) -> impl IntoResponse {
     let runs = state.runs.read().await;
     runs.get(&id)
-        .map(|r| Json(r.sim.events.clone()).into_response())
+        .map(|r| Json(filter_events(&r.sim, &query)).into_response())
         .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 
-async fn transactions(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+async fn transactions(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<TransactionQuery>,
+) -> impl IntoResponse {
     let runs = state.runs.read().await;
     runs.get(&id)
-        .map(|r| Json(r.sim.transactions.clone()).into_response())
+        .map(|r| Json(filter_transactions(&r.sim, &query)).into_response())
         .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 
@@ -954,5 +1046,79 @@ mod tests {
         let bytes = write_metrics_parquet(&points).expect("metrics should export");
         assert_eq!(&bytes[..4], b"PAR1");
         assert_eq!(&bytes[bytes.len() - 4..], b"PAR1");
+    }
+
+    #[test]
+    fn event_and_transaction_filters_select_auditable_ranges() {
+        let mut sim = Simulation::new(RunConfig {
+            agent_count: 8,
+            regions: 2,
+            ..RunConfig::default()
+        });
+        sim.people[0].risk_score = 0.95;
+        sim.events = vec![
+            EconomicEvent {
+                tick: 1,
+                event_type: "purchase".into(),
+                agent_id: 0,
+                region: 1,
+                amount: 250.0,
+                reason: "test".into(),
+            },
+            EconomicEvent {
+                tick: 2,
+                event_type: "purchase".into(),
+                agent_id: 1,
+                region: 0,
+                amount: 800.0,
+                reason: "test".into(),
+            },
+        ];
+        sim.transactions = vec![
+            Transaction {
+                id: 1,
+                tick: 1,
+                from: 0,
+                to: 3_000_000,
+                kind: "purchase".into(),
+                amount: 250.0,
+                region: 1,
+                reason: "test".into(),
+            },
+            Transaction {
+                id: 2,
+                tick: 2,
+                from: 4_000_000,
+                to: 1,
+                kind: "loan".into(),
+                amount: 900.0,
+                region: 0,
+                reason: "test".into(),
+            },
+        ];
+
+        let events = filter_events(
+            &sim,
+            &EventQuery {
+                event_type: Some("purchase".into()),
+                tick: Some(1),
+                risk: Some(true),
+                ..Default::default()
+            },
+        );
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].agent_id, 0);
+
+        let transactions = filter_transactions(
+            &sim,
+            &TransactionQuery {
+                kind: Some("loan".into()),
+                min_amount: Some(800.0),
+                agent: Some(1),
+                ..Default::default()
+            },
+        );
+        assert_eq!(transactions.len(), 1);
+        assert_eq!(transactions[0].id, 2);
     }
 }
