@@ -42,6 +42,15 @@ paths:
       responses:
         '200': { description: Historical snapshot }
         '410': { description: Tick is outside the replay window }
+  /api/runs/{id}/compliance/{alert_id}/resolve:
+    post:
+      summary: Resolve an auditable AML or tax alert
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: alert_id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200': { description: Updated snapshot }
+        '409': { description: Alert is missing or already resolved }
   /api/runs/{id}/policy:
     post:
       summary: Apply monetary policy immediately

@@ -29,6 +29,7 @@ El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
 - `GET /api/runs/{id}/replay/{tick}` recupera un snapshot histórico exacto; devuelve `410` si ya salió de la ventana local.
 - `GET /api/runs/{id}/events` devuelve eventos del último tick.
 - `GET /api/runs/{id}/transactions` devuelve las transferencias institucionales del último tick.
+- `POST /api/runs/{id}/compliance/{alert_id}/resolve` marca una alerta AML/fiscal como revisada y conserva el cambio en el replay.
 - `GET /api/runs/{id}/stream` emite snapshots por WebSocket.
 
 El endpoint de creación acepta `seed`, `model_version`, `agent_count`, `regions`, `ticks`, `policy_config` y `scenario_config`. El límite defensivo actual es 100,000 agentes; el valor por defecto es 10,000.
