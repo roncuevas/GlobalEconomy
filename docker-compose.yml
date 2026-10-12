@@ -1,0 +1,15 @@
+services:
+  api:
+    image: rust:1.98-bookworm
+    working_dir: /app
+    volumes: [".:/app"]
+    command: cargo run
+    ports: ["8080:8080"]
+  web:
+    image: node:24-bookworm
+    working_dir: /app
+    volumes: ["./web:/app"]
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports: ["5173:5173"]
+    depends_on: [api]
+

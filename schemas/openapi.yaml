@@ -1,0 +1,35 @@
+openapi: 3.1.0
+info:
+  title: GlobalEconomy API
+  version: 0.1.0
+paths:
+  /api/runs:
+    post:
+      summary: Create deterministic simulation run
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RunConfig' } } }
+      responses: { '200': { description: Created run } }
+  /api/runs/{id}/snapshot:
+    get:
+      summary: Get visual snapshot
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Snapshot } }
+components:
+  schemas:
+    RunConfig:
+      type: object
+      required: [seed, model_version, agent_count, regions, ticks]
+      properties:
+        seed: { type: integer, format: int64 }
+        model_version: { type: string }
+        agent_count: { type: integer, minimum: 1 }
+        regions: { type: integer, minimum: 1 }
+        ticks: { type: integer, minimum: 1 }
+    Snapshot:
+      type: object
+      properties:
+        tick: { type: integer }
+        agents: { type: array, items: { type: object } }
+        metrics: { type: object }
+
