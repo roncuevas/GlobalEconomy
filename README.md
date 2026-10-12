@@ -41,6 +41,8 @@ El motor está aislado de Axum en `src/lib.rs`. La corrida evolutiva comienza co
 
 El ciclo institucional inicial también crea empresas, bancos, gobierno, banco central y mercados regionales. Cada tick registra nóminas, impuestos, transferencias y compras como transacciones explicables; los balances de bancos y gobierno se reconcilian después del ciclo. `RunConfig.institutions` permite ajustar el número de empresas, bancos y sectores sin cambiar el contrato existente.
 
+El ciclo de crédito añade préstamos endógenos cuando una persona necesita liquidez o una empresa no cubre su capital de trabajo, registra creación monetaria, amortizaciones y deuda por entidad, y liquida empresas cuando la deuda supera de forma extrema su caja. Las quiebras generan eventos y transacciones de liquidación explicables; los límites de crédito parten de reservas y préstamos de cada banco.
+
 La cronología toma como referencias institucionales la historia de la Reserva Federal, la evolución del Banco de Inglaterra, la línea histórica del FMI sobre Bretton Woods y los SDR, y la creación del euro documentada por el BCE. Es una traducción didáctica al laboratorio, no una reconstrucción cuantitativa de una economía histórica real.
 
 `catastrophes` es opcional y reproducible por semilla. Cuando está activo, se aplican además crisis bancaria, burbuja inmobiliaria, crisis de deuda soberana, shock sanitario e inflación de oferta; cuando está apagado, esos eventos permanecen visibles como escenarios alternativos pero no alteran la corrida.
