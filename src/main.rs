@@ -109,6 +109,10 @@ async fn main() {
         .route("/api/runs/{id}/replay/{tick}", get(replay))
         .route("/api/runs/{id}/events", get(events))
         .route("/api/runs/{id}/transactions", get(transactions))
+        .route(
+            "/api/runs/{id}/compliance/{alert_id}/resolve",
+            post(resolve_compliance),
+        )
         .route("/api/runs/{id}/stream", get(stream))
         .with_state(state)
         .layer(CorsLayer::permissive())
@@ -555,6 +559,29 @@ async fn transactions(State(state): State<AppState>, Path(id): Path<Uuid>) -> im
     runs.get(&id)
         .map(|r| Json(r.sim.transactions.clone()).into_response())
         .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+}
+
+async fn resolve_compliance(
+    State(state): State<AppState>,
+    Path((id, alert_id)): Path<(Uuid, u64)>,
+) -> impl IntoResponse {
+    let mut runs = state.runs.write().await;
+    match runs.get_mut(&id) {
+        Some(record) => {
+            if !record.sim.resolve_compliance_alert(alert_id) {
+                return StatusCode::CONFLICT.into_response();
+            }
+            remember(record);
+            persist_run(&state.storage_dir, id, record);
+            append_snapshot(
+                &state.storage_dir,
+                id,
+                record.history.last().expect("history is non-empty"),
+            );
+            Json(record.sim.snapshot()).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 async fn stream(
     State(state): State<AppState>,
