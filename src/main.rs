@@ -59,6 +59,7 @@ async fn main() {
         .route("/api/runs/{id}/policy-mode", post(update_policy_mode))
         .route("/api/runs/{id}/snapshot", get(snapshot))
         .route("/api/runs/{id}/events", get(events))
+        .route("/api/runs/{id}/transactions", get(transactions))
         .route("/api/runs/{id}/stream", get(stream))
         .with_state(state)
         .layer(CorsLayer::permissive())
@@ -223,6 +224,13 @@ async fn events(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl Int
     let runs = state.runs.read().await;
     runs.get(&id)
         .map(|r| Json(r.sim.events.clone()).into_response())
+        .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+}
+
+async fn transactions(State(state): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+    let runs = state.runs.read().await;
+    runs.get(&id)
+        .map(|r| Json(r.sim.transactions.clone()).into_response())
         .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 async fn stream(
