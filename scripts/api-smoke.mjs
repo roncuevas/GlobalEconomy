@@ -135,6 +135,13 @@ const streamTypes = await new Promise((resolve, reject) => {
 });
 await request(`/api/runs/${first.run_id}/pause`, { method: 'POST' });
 
+const society = await request('/api/generations', { method: 'POST', ...json({ config: { seed: 7, founders: 8, max_population: 120 } }) });
+const stepped = await request(`/api/generations/${society.id}/step`, { method: 'POST', ...json({ count: 30 }) });
+if (stepped.snapshot.tick !== 30) throw new Error(`Generations step reached tick ${stepped.snapshot.tick}`);
+const founder = await request(`/api/generations/${society.id}/person/0`);
+const restored = await request('/api/generations', { method: 'POST', ...json({ config: society.snapshot.config, advance_to: 30 }) });
+if (JSON.stringify(restored.snapshot.metrics) !== JSON.stringify(stepped.snapshot.metrics)) throw new Error('Generations advance_to is not deterministic');
+
 console.log(JSON.stringify({
   ok: true,
   runs: [first.run_id, second.run_id],
@@ -145,4 +152,7 @@ console.log(JSON.stringify({
   metric_points: metrics.length,
   parquet_magic: magic,
   websocket_types: streamTypes,
+  generations_population: stepped.snapshot.metrics.population,
+  generations_events: stepped.events.length,
+  generations_founder_children: founder.children.length,
 }));

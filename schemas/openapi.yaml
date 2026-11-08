@@ -167,8 +167,84 @@ paths:
       summary: Stream live snapshots, metrics, transactions and alerts over WebSocket
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses: { '101': { description: WebSocket upgrade; messages use types snapshot, metric_update, transaction, alert and run_status } }
+  /api/generations:
+    post:
+      summary: Create an in-memory Generations society; advance_to replays it deterministically to a tick
+      requestBody: { content: { application/json: { schema: { type: object, properties: { config: { $ref: '#/components/schemas/GenConfig' }, advance_to: { type: integer, minimum: 0 } } } } } }
+      responses: { '200': { description: Society created, content: { application/json: { schema: { type: object, required: [id, config_hash, snapshot], properties: { id: { type: string, format: uuid }, config_hash: { type: string }, snapshot: { $ref: '#/components/schemas/GenSnapshot' } } } } } } }
+  /api/generations/{id}/step:
+    post:
+      summary: Advance a society 1 to 50 years and return every event produced
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { count: { type: integer, minimum: 1, maximum: 50, default: 1 } } } } } }
+      responses: { '200': { description: Stepped, content: { application/json: { schema: { type: object, required: [snapshot, events], properties: { snapshot: { $ref: '#/components/schemas/GenSnapshot' }, events: { type: array, items: { $ref: '#/components/schemas/GenEvent' } } } } } } }, '404': { description: Unknown society; recreate it with advance_to } }
+  /api/generations/{id}/reset:
+    post:
+      summary: Restart a society from year 0 with the same configuration
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Snapshot at year 0, content: { application/json: { schema: { $ref: '#/components/schemas/GenSnapshot' } } } }, '404': { description: Unknown society } }
+  /api/generations/{id}/snapshot:
+    get:
+      summary: Current society snapshot (living citizens plus those who died in the last 3 years)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Snapshot, content: { application/json: { schema: { $ref: '#/components/schemas/GenSnapshot' } } } }, '404': { description: Unknown society } }
+  /api/generations/{id}/person/{pid}:
+    get:
+      summary: A citizen with parent, children and ancestors up to the founder, alive or dead
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }, { name: pid, in: path, required: true, schema: { type: integer } }]
+      responses: { '200': { description: Family view, content: { application/json: { schema: { type: object, required: [person, surname, children, ancestors], properties: { person: { $ref: '#/components/schemas/Citizen' }, surname: { type: string }, parent: { $ref: '#/components/schemas/Citizen' }, children: { type: array, items: { $ref: '#/components/schemas/Citizen' } }, ancestors: { type: array, items: { $ref: '#/components/schemas/Citizen' } } } } } } }, '404': { description: Unknown society or citizen } }
 components:
   schemas:
+    GenConfig:
+      type: object
+      properties:
+        seed: { type: integer, format: int64, default: 42 }
+        founders: { type: integer, minimum: 2, maximum: 60, default: 12 }
+        max_population: { type: integer, minimum: 20, maximum: 2000, default: 300 }
+        inheritance_tax: { type: number, minimum: 0, maximum: 1, default: 0 }
+        capital_return: { type: number, minimum: 0, maximum: 0.1, default: 0.04 }
+        max_ticks: { type: integer, minimum: 1, maximum: 2000, default: 400 }
+    Citizen:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        lineage: { type: integer }
+        parent: { type: integer, nullable: true }
+        generation: { type: integer }
+        age: { type: integer }
+        alive: { type: boolean }
+        died_tick: { type: integer, nullable: true }
+        cause: { type: string, enum: [old_age, poverty], nullable: true }
+        money: { type: number }
+        delta: { type: number, description: Change in money during the last year }
+        earned: { type: number, description: Lifetime wages plus returns }
+        received: { type: number, description: Lifetime dowry, inheritances and public transfers }
+        strategy: { type: string, enum: [saver, consumer, entrepreneur] }
+        skill: { type: number }
+        children: { type: array, items: { type: integer } }
+        x: { type: number, description: 'Fixed lineage-layout position in [0,1]' }
+        y: { type: number }
+    GenEvent:
+      type: object
+      required: [kind, tick]
+      description: 'Tagged by kind: birth (child, parent, lineage, dowry), death (id, lineage, age, cause, estate), inheritance (from, heirs, each, tax, to_state), redistribution (amount, recipients), extinction (lineage), collapse'
+      properties:
+        kind: { type: string, enum: [birth, death, inheritance, redistribution, extinction, collapse] }
+        tick: { type: integer }
+      additionalProperties: true
+    GenSnapshot:
+      type: object
+      properties:
+        tick: { type: integer }
+        config: { $ref: '#/components/schemas/GenConfig' }
+        config_hash: { type: string }
+        finished: { type: boolean }
+        citizens: { type: array, items: { $ref: '#/components/schemas/Citizen' } }
+        lineages: { type: array, items: { type: object, properties: { id: { type: integer }, surname: { type: string }, alive: { type: integer }, ever: { type: integer }, wealth: { type: number }, share: { type: number }, extinct_tick: { type: integer, nullable: true } } } }
+        events: { type: array, items: { $ref: '#/components/schemas/GenEvent' } }
+        metrics: { type: object, properties: { tick: { type: integer }, population: { type: integer }, births: { type: integer }, deaths: { type: integer }, gini: { type: number }, top_10_share: { type: number }, mean_wealth: { type: number }, median_wealth: { type: number }, total_wealth: { type: number }, lineages_alive: { type: integer }, inherited_share: { type: number }, max_generation: { type: integer }, state_collected: { type: number } } }
+        metric_history: { type: array, items: { type: object } }
     RunConfig:
       type: object
       required: [seed, model_version, agent_count, regions, ticks]

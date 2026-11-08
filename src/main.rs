@@ -27,10 +27,13 @@ use tokio::sync::RwLock;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use uuid::Uuid;
 
+mod generations_api;
+
 #[derive(Clone)]
 struct AppState {
     runs: Arc<RwLock<HashMap<Uuid, RunRecord>>>,
     storage_dir: Arc<PathBuf>,
+    generations: generations_api::GenStore,
 }
 #[derive(Serialize, Deserialize)]
 struct RunRecord {
@@ -129,6 +132,7 @@ async fn main() {
     let state = AppState {
         runs: Arc::new(RwLock::new(runs)),
         storage_dir: Arc::new(storage_dir),
+        generations: Arc::new(RwLock::new(HashMap::new())),
     };
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -159,6 +163,7 @@ async fn main() {
             post(resolve_compliance),
         )
         .route("/api/runs/{id}/stream", get(stream))
+        .merge(generations_api::routes())
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
