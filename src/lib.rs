@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
+pub mod generations;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PolicyConfig {
     pub income_tax_rate: f64,
