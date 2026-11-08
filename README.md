@@ -1,72 +1,159 @@
-# GlobalEconomy
+# Economía viva · GlobalEconomy
 
-Laboratorio visual de economía basada en agentes. El MVP usa datos sintéticos y un motor determinista: la misma configuración, semilla y versión producen la misma corrida.
+Laboratorio didáctico de economía basada en agentes. Una sociedad pequeña nace con el mismo dinero para todos y, año tras año, sus familias se reproducen, heredan, prosperan o se extinguen. Así se ve de dónde sale la desigualdad. Detrás hay un laboratorio completo con bancos, crédito, política monetaria, crisis y detección de fraude.
+
+El motor está escrito en Rust y es determinista: con la misma configuración y la misma semilla, la corrida es idéntica. La interfaz usa React y PixiJS (WebGL) y está toda en español. Pensada para clases de economía en escritorio o proyector.
+
+![Vista Familias: cada color es una familia, el tamaño es la riqueza y las líneas unen a cada hijo con su progenitor](docs/screenshots/generaciones-familias.png)
+
+## Qué puedes hacer
+
+**Generaciones** es la vista principal.
+
+- **Fundar una sociedad.** Eliges cuántas familias fundadoras hay, la población máxima, el impuesto a la herencia, el rendimiento del capital y la semilla.
+- **Verla evolucionar.** Cada hijo nace junto a su progenitor, los fallecidos se desvanecen y las herencias viajan como puntos dorados hacia los herederos.
+- **Cambiar entre dos mapas.** *Familias* muestra los linajes en abanico. *Riqueza* coloca a cada persona por su dinero (eje x, en escala logarítmica) y su generación (eje y), con la mediana marcada.
+- **Leer qué pasó en lenguaje sencillo.** Ejemplo: «Año 78 · Muere Gabriel Romero a los 71 años. Sus 3 hijos heredan 54 u. m. cada uno».
+- **Inspeccionar a cualquier persona.** Su ficha separa el dinero **recibido** (dote, herencias, fondo público) del **ganado** (salario y rendimientos) y muestra su progenitor, sus hijos y su linaje hasta el fundador.
+
+| Riqueza por generación | Ficha de una persona |
+|---|---|
+| ![Vista Riqueza: x = riqueza en escala logarítmica, y = generación](docs/screenshots/generaciones-riqueza.png) | ![Ficha con la barra recibido frente a ganado y el linaje](docs/screenshots/generaciones-ficha.png) |
+
+El **Laboratorio completo** (`#laboratorio`) simula hasta 100,000 agentes. Incluye empresas, bancos, gobierno, banco central y mercados regionales, 69 hitos de historia monetaria, shocks, alertas de riesgo sistémico con sus contramedidas, alertas AML y fiscales, replay de ticks y comparación de corridas.
+
+![Laboratorio completo: red económica, indicadores, alerta de riesgo y política monetaria](docs/screenshots/laboratorio.png)
 
 ## Arranque local
 
+Necesitas Rust estable y Node 20 o superior.
+
 ```bash
-cargo test
-cargo run
-# en otra terminal
-cd web && npm install && npm run dev
+cargo run --release          # API en http://localhost:8080
+cd web && npm install && npm run dev   # UI en http://localhost:5173
 ```
 
-El API queda en `http://localhost:8080`; la UI en `http://localhost:5173`.
+Pruebas:
 
-Con el servidor ejecutándose, el smoke test de contrato se puede repetir con `node scripts/api-smoke.mjs`. Para una corrida aislada en otro puerto y directorio, usa `GLOBALECONOMY_PORT=8090 GLOBALECONOMY_DATA_DIR=/tmp/globaleconomy-smoke cargo run --release` y, en otra terminal, `GLOBALECONOMY_BASE_URL=http://127.0.0.1:8090 node scripts/api-smoke.mjs`.
+```bash
+cargo test                   # motor, Generaciones y handlers de la API
+cd web && npx tsc -b         # tipos de la UI
+node scripts/api-smoke.mjs   # contrato HTTP, con el servidor corriendo
+```
 
-## API mínima
+Para correr el smoke test aislado, usa otro puerto y otra carpeta de datos:
 
-- `POST /api/runs` crea una corrida.
-- `GET /api/runs` lista corridas activas con tick, hash de configuración y ticks disponibles para replay.
-- `POST /api/runs/compare` compara métricas de varias corridas en un tick común.
-- `POST /api/runs/{id}/step` avanza exactamente un tick.
-- `POST /api/runs/{id}/start` y `/pause` controlan el estado.
-- `POST /api/runs/{id}/policy` aplica una política monetaria en tiempo real.
-- `POST /api/runs/{id}/policy/next` aplica el siguiente hito pendiente sin avanzar el tick.
-- `POST /api/runs/{id}/policy-mode` cambia entre `manual` y `automatic`.
-- `POST /api/runs/{id}/shock` aplica manualmente un shock sintético de oferta, banca, activos o salud en una región.
-- `POST /api/runs/{id}/risk/countermeasure` aplica la contramedida del riesgo abierto más reciente.
-- `GET /api/runs/{id}/snapshot` devuelve el estado visual reducido.
-- `GET /api/runs/{id}/history` devuelve el historial local acotado de snapshots.
-- `GET /api/runs/{id}/metrics` devuelve solo la serie compacta de métricas persistidas, sin agentes ni conexiones.
-- `GET /api/runs/{id}/metrics.parquet` descarga esa serie en Parquet columnar para DuckDB, Python o notebooks.
-- `GET /api/runs/{id}/replay/{tick}` recupera un snapshot histórico exacto; devuelve `410` si ya salió de la ventana local.
-- `GET /api/runs/{id}/events` y `/transactions` aceptan filtros por tick, tipo/operación, entidad, región, riesgo y rango monetario.
-- `POST /api/runs/{id}/compliance/{alert_id}/resolve` marca una alerta AML/fiscal como revisada y conserva el cambio en el replay.
-- `GET /api/runs/{id}/stream` emite por WebSocket mensajes `snapshot`, `metric_update`, `transaction`, `alert` y `run_status`.
+```bash
+GLOBALECONOMY_PORT=8090 GLOBALECONOMY_DATA_DIR=/tmp/ge-smoke cargo run --release
+GLOBALECONOMY_BASE_URL=http://127.0.0.1:8090 node scripts/api-smoke.mjs
+```
 
-El contrato completo está en [`schemas/openapi.yaml`](schemas/openapi.yaml), incluyendo control de corrida, políticas, riesgos, eventos y WebSocket. Para escenarios pequeños existe un adaptador WASM opcional en [`wasm/README.md`](wasm/README.md), que reutiliza el motor Rust sin duplicar reglas.
+## Reglas de Generaciones
 
-El endpoint de creación acepta `seed`, `model_version`, `agent_count`, `regions`, `ticks`, `policy_config` y `scenario_config`. El límite defensivo actual es 100,000 agentes; el valor por defecto es 10,000.
+Cada tick es un año, y cada paso se puede explicar en una frase.
 
-Para repetir la medición de escala del motor sin levantar el servidor, ejecuta `cargo run --release --bin scale-benchmark`. El comando mide inicialización y un tick determinista para 1,000, 10,000 y 100,000 agentes, e imprime también el tamaño del snapshot y las transacciones generadas. La referencia inicial es mantener un tick de 10,000 agentes por debajo de 100 ms en una máquina de desarrollo; los tiempos dependen del hardware.
+1. **Envejecer.** Todos cumplen un año más.
+2. **Ganar.**
+   - Quien tiene entre 18 y 64 años cobra un salario según su habilidad.
+   - El dinero acumulado rinde según la estrategia: quien *ahorra* obtiene el rendimiento completo, quien *consume* una cuarta parte, y quien *emprende* asume riesgo.
+3. **Costo de vida.**
+   - Cada adulto paga el suyo, y el progenitor paga el de sus hijos menores.
+   - Nadie queda con dinero negativo. Quien no alcanza a cubrir su costo de vida acumula años de penuria.
+4. **Nacimientos.**
+   - Pueden tener un hijo quienes tienen entre 20 y 45 años, al menos 60 u. m. y menos de 4 hijos.
+   - Cerca de la población máxima nacen menos.
+   - Cada hijo recibe una **dote** del 25% del dinero de su progenitor. Hereda la estrategia, pero su habilidad tiende al promedio.
+5. **Muertes.**
+   - La probabilidad crece con la edad.
+   - Quien pasa 5 años seguidos sin cubrir su costo de vida no puede sostenerse.
+6. **Herencia.**
+   - Primero se cobra el impuesto a la herencia y el resto se reparte por igual entre los hijos vivos.
+   - Si no quedan hijos vivos, todo va al fondo público.
+7. **Redistribución.** El fondo público se reparte por igual entre todas las personas vivas.
 
-El servidor mantiene los últimos 240 snapshots por corrida en memoria para replay local y comparación rápida. El estado actual se serializa en `data/runs/run-{id}.json` usando escritura temporal y renombrado atómico; el historial completo se agrega en `run-{id}.snapshots.jsonl`, una línea por snapshot, sin reescribir toda la corrida. Cada snapshot nuevo escribe también su offset en `run-{id}.snapshots.index`, de modo que `/replay/{tick}` puede recuperar un tick antiguo sin deserializar todo el log; los logs anteriores sin índice conservan un fallback compatible por escaneo. Puedes cambiar la carpeta con `GLOBALECONOMY_DATA_DIR`. La serie compacta se puede exportar a Parquet y consultar localmente, por ejemplo: `duckdb -c "SELECT tick, gdp, gini, money_supply FROM read_parquet('run-<id>-metrics.parquet') ORDER BY tick"`.
+Contrastes que conviene probar en clase:
 
-## Diseño del MVP
+- **Impuesto a la herencia** de 0% contra 80%: con el impuesto alto, el Gini queda más bajo. Hay un test que lo comprueba en 10 semillas.
+- **Rendimiento del capital** alto contra bajo: con un rendimiento alto, las fortunas heredadas crecen más rápido que los salarios.
 
-El motor está aislado de Axum en `src/lib.rs`. La corrida evolutiva comienza con el mismo patrimonio para todos y genera desigualdad únicamente después de que avanzan los ticks. `monetary_history` registra 69 hitos sintéticos inspirados en la historia monetaria: dinero mercancía y acuñación, banca central y reservas, patrón oro y convertibilidad, guerras y shocks petroleros, Bretton Woods, SDR, tipos flotantes, Plaza/Louvre, ERM y euro, metas de inflación, agregados monetarios, controles y liberalización del crédito, burbujas, crisis asiática y global, QE, LTRO, OMT, tipos cero/negativos, orientación futura, criptoactivos, stablecoins, pagos instantáneos, CBDC, QT y política macroprudencial. En modo manual los nodos continúan evolucionando entre políticas hasta que el usuario aplica el siguiente hito; en modo automático se respeta la agenda de ticks. Los eventos con riesgo sistémico se pueden activar como catástrofes opcionales. El snapshot expone el banco central, los mercados regionales, los eventos de emisión y la riqueza por nodo.
+Las corridas de Generaciones viven en memoria. Si el servidor se reinicia, la UI recrea la sociedad en el mismo año a partir de su semilla.
 
-El ciclo institucional inicial también crea empresas, bancos, gobierno, banco central y mercados regionales. Cada tick registra nóminas, impuestos, transferencias y compras como transacciones explicables; los balances de bancos y gobierno se reconcilian después del ciclo. `RunConfig.institutions` permite ajustar el número de empresas, bancos y sectores sin cambiar el contrato existente.
+## API
 
-El ciclo de crédito añade préstamos endógenos cuando una persona necesita liquidez o una empresa no cubre su capital de trabajo, registra creación monetaria, amortizaciones y deuda por entidad, y liquida empresas cuando la deuda supera de forma extrema su caja. Las quiebras generan eventos y transacciones de liquidación explicables; los límites de crédito parten de reservas y préstamos de cada banco.
+El contrato completo está en [`schemas/openapi.yaml`](schemas/openapi.yaml).
 
-La cronología toma como referencias institucionales la historia de la Reserva Federal, la evolución del Banco de Inglaterra, la línea histórica del FMI sobre Bretton Woods y los SDR, y la creación del euro documentada por el BCE. Es una traducción didáctica al laboratorio, no una reconstrucción cuantitativa de una economía histórica real.
+**Generaciones**
 
-`catastrophes` es opcional y reproducible por semilla. Cuando está activo, se aplican además crisis bancaria, burbuja inmobiliaria, crisis de deuda soberana, shock sanitario e inflación de oferta; cuando está apagado, esos eventos permanecen visibles como escenarios alternativos pero no alteran la corrida.
+| Método | Ruta | Uso |
+|---|---|---|
+| `POST` | `/api/generations` | Crea una sociedad. `{config, advance_to?}` la reproduce de forma determinista hasta el año indicado. |
+| `POST` | `/api/generations/{id}/step` | Avanza de 1 a 50 años (`{count}`) y devuelve el snapshot y todos los eventos. |
+| `POST` | `/api/generations/{id}/reset` | Vuelve al año 0 con la misma semilla. |
+| `GET` | `/api/generations/{id}/snapshot` | Estado actual: personas vivas y fallecidas en los últimos 3 años. |
+| `GET` | `/api/generations/{id}/person/{pid}` | Una persona con su progenitor, sus hijos y sus ancestros. |
 
-Antes de cada política pendiente el motor puede detectar un precursor adverso: falsificación y pérdida de confianza, corrida bancaria, fuga de reservas, inflación de oferta, burbuja y apalancamiento, ataque cambiario, estrés soberano, congelamiento de liquidez o problemas de integridad de pagos. Cada alerta conserva causa, señal de detección, severidad, contramedida y marcos métricos antes/después de la política y de la respuesta. La lógica es sintética y defensiva; no contiene instrucciones operativas para cometer delitos.
+**Laboratorio**
 
-El módulo de integridad económica analiza las transacciones del tick con reglas transparentes: crédito desproporcionado respecto al ingreso declarado, salidas incompatibles con patrimonio e ingresos, ventas empresariales sin caja suficiente, estructuración de transferencias cerca de un umbral sintético, ciclos de transferencias y volumen entre regiones sin actividad compatible. Cada `ComplianceAlert` conserva categoría (`aml` o `tax_evasion`), severidad, motivo, entidad y los IDs de transacciones relacionadas. El snapshot expone los casos recientes y las métricas `aml_alerts` y `tax_alerts`; son señales sintéticas para detección defensiva, no perfiles de personas reales.
+| Método | Ruta | Uso |
+|---|---|---|
+| `POST` / `GET` | `/api/runs` | Crea corridas o las lista. |
+| `POST` | `/api/runs/compare` | Compara métricas de varias corridas en un tick común. |
+| `POST` | `/api/runs/{id}/step` · `start` · `pause` · `reset` | Control de la corrida. |
+| `POST` | `/api/runs/{id}/policy` · `policy/next` · `policy-mode` | Política monetaria manual o automática. |
+| `POST` | `/api/runs/{id}/shock` · `risk/countermeasure` | Shocks sintéticos y contramedidas. |
+| `POST` | `/api/runs/{id}/compliance/{alert_id}/resolve` | Marca una alerta AML o fiscal como revisada. |
+| `GET` | `/api/runs/{id}/snapshot` · `history` · `metrics` · `replay/{tick}` | Estado, historial y replay exacto. Responde `410` si el tick ya salió de la ventana local. |
+| `GET` | `/api/runs/{id}/metrics.parquet` | Serie de métricas en Parquet para DuckDB, Python o notebooks. |
+| `GET` | `/api/runs/{id}/events` · `transactions` | Eventos y transacciones, con filtros por tick, tipo, entidad, región, riesgo y monto. |
+| `GET` | `/api/runs/{id}/stream` | WebSocket con `snapshot`, `metric_update`, `transaction`, `alert` y `run_status`. |
 
-La red no se renderiza como cientos de elementos SVG/React. React conserva los controles y las métricas; PixiJS v8 dibuja nodos y conexiones en un canvas WebGL, dejando preparado el camino para 10,000+ agentes. PixiJS documenta WebGL/WebGL2 como renderer estable recomendado para producción y WebGPU como opción más nueva. La UI también permite seleccionar corridas y comparar sus métricas en ticks históricos; la consulta recupera snapshots antiguos desde el log JSONL cuando ya no están en la ventana rápida.
+## Arquitectura
 
-La cabecera de la UI permite cambiar la semilla reproducible y elegir 1,000, 10,000 o 100,000 agentes antes de crear una corrida. La vista rápida filtra nodos por tipo, región, sector, patrimonio y riesgo sin mutar el motor. El panel de política permite experimentar también con impuesto sobre ingresos y transferencias por persona en tiempo real.
+```
+src/lib.rs              motor del laboratorio (Simulation)
+src/generations.rs      motor de Generaciones (GenSim), independiente del laboratorio
+src/main.rs             servidor Axum, persistencia y rutas del laboratorio
+src/generations_api.rs  rutas de Generaciones
+src/bin/scale-benchmark.rs
+web/src/                React + Zustand + PixiJS v8
+schemas/openapi.yaml    contrato HTTP
+wasm/                   adaptador WASM opcional para escenarios pequeños
+```
 
-La configuración `scenario_config.evolution` activa estrategias explicables (`saver`, `consumer`, `entrepreneur`) que se ajustan según patrimonio, necesidad e ingreso, con una tasa de mutación reproducible. Con `catastrophes` activo, `shock_probability` e `shock_intensity` generan shocks externos reproducibles por semilla —oferta, corrida bancaria, burbuja de activos o crisis sanitaria— y el snapshot conserva región, impacto y causa. La evolución y los shocks se aplican dentro del ciclo determinista, por lo que también forman parte del replay.
+- **Determinismo.** Cada tick usa un RNG `ChaCha8` sembrado con `semilla ^ tick`. El hash de configuración (SHA-256) identifica cada corrida.
+- **Generaciones** guarda a las personas en un vector al que solo se agregan registros: los fallecidos no se borran, así que la genealogía siempre está completa. Las posiciones del mapa de familias se fijan al nacer, para que el mapa no salte entre años.
+- **Persistencia del laboratorio.**
+  - El estado de cada corrida se guarda en `data/runs/run-{id}.json` con escritura atómica.
+  - Los snapshots se agregan a `run-{id}.snapshots.jsonl`, con un índice de offsets para que el replay no tenga que releer todo el log.
+  - En memoria se conservan los últimos 240 snapshots.
+  - `GLOBALECONOMY_DATA_DIR` cambia la carpeta.
+- **Renderizado.** React maneja los controles y PixiJS dibuja la red en WebGL.
+  - En el laboratorio, las conexiones se agrupan por tipo y la selección de nodos usa una rejilla espacial.
+  - En Generaciones, cada persona es un sprite con transiciones interpoladas.
+  - Con un tope de 2,000 personas a velocidad 4× se mantiene a 60 fps.
 
-Las métricas en tiempo real incluyen también quiebras acumuladas, concentración de préstamos bancarios, brecha relativa de riqueza entre regiones y movilidad entre deciles de patrimonio; todas se serializan en `Metrics` y se muestran en la cabecera de la UI con tooltip explicativo.
+## Rendimiento
 
-La ruta crítica de cumplimiento indexa las transacciones del tick por entidad, evitando revisar toda la actividad para cada persona. En el entorno de desarrollo, un binario `--release` procesó y devolvió un snapshot de 10,000 agentes en 33 ms por `POST /step` (payload de aproximadamente 2.66 MB). En el canvas, las conexiones PixiJS se agrupan por tipo de flujo y la selección usa una rejilla espacial, reduciendo trabajo por frame sin alterar el resultado económico.
+```bash
+cargo run --release --bin scale-benchmark
+```
 
+Mide la inicialización y un tick con 1,000, 10,000 y 100,000 agentes, junto con el tamaño del snapshot. La meta es que un tick de 10,000 agentes tarde menos de 100 ms. En desarrollo, `POST /step` con 10,000 agentes tardó 33 ms (payload de unos 2.66 MB).
+
+<details>
+<summary>Detalle del modelo del laboratorio</summary>
+
+- **Historia monetaria.** 69 hitos sintéticos: dinero mercancía, banca central, patrón oro, Bretton Woods, SDR, tipos flotantes, euro, metas de inflación, QE, tasas cero y negativas, criptoactivos, stablecoins, CBDC y política macroprudencial. En modo manual el usuario aplica cada hito; en modo automático se respeta la agenda de ticks. Es una traducción didáctica, no una reconstrucción cuantitativa.
+- **Instituciones.** Empresas, bancos, gobierno, banco central y mercados regionales. Cada tick registra nóminas, impuestos, transferencias y compras como transacciones explicables. `RunConfig.institutions` ajusta cuántas empresas, bancos y sectores hay.
+- **Crédito.** Hay préstamos cuando falta liquidez, con creación monetaria, amortizaciones y quiebras con liquidación registrada.
+- **Catástrofes y shocks.** Son opcionales y reproducibles por semilla: crisis bancaria, burbuja inmobiliaria, deuda soberana, shock sanitario e inflación de oferta.
+- **Riesgo sistémico.** Antes de cada política puede aparecer una alerta con su causa, la señal que la detectó, su severidad, una contramedida y las métricas de antes y después.
+- **Integridad.** Reglas transparentes de AML y evasión fiscal: crédito desproporcionado, estructuración cerca de umbrales, ciclos de transferencias y ventas sin caja. Son señales sintéticas para practicar detección; no describen personas reales.
+- **Estrategias.** `scenario_config.evolution` permite que los agentes cambien entre ahorrar, consumir y emprender, con mutación reproducible.
+- **Métricas.** PIB, Gini, desempleo, oferta monetaria, quiebras, concentración bancaria, brecha regional y movilidad entre deciles.
+
+</details>
+
+## Licencia
+
+MIT
